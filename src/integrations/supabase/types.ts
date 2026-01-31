@@ -48,6 +48,7 @@ export type Database = {
           phone_number: string | null
           telegram_id: number
           updated_at: string
+          user_state: string | null
           username: string | null
         }
         Insert: {
@@ -59,6 +60,7 @@ export type Database = {
           phone_number?: string | null
           telegram_id: number
           updated_at?: string
+          user_state?: string | null
           username?: string | null
         }
         Update: {
@@ -70,6 +72,7 @@ export type Database = {
           phone_number?: string | null
           telegram_id?: number
           updated_at?: string
+          user_state?: string | null
           username?: string | null
         }
         Relationships: []
