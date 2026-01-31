@@ -379,6 +379,14 @@ serve(async (req) => {
     const chatId = message.chat.id;
     const text = message.text || "";
     const telegramUser = message.from;
+    const chatType = message.chat.type;
+
+    // Guruhda oddiy xabarlarni e'tiborsiz qoldirish (faqat private chatda javob berish)
+    if (chatType === "group" || chatType === "supergroup") {
+      // Guruhda faqat inline button callback'larga javob beramiz (yuqorida)
+      // Oddiy text xabarlarni e'tiborsiz qoldiramiz
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
 
     // Kontakt yuborilganda
     if (message.contact) {
