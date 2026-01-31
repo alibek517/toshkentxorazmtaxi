@@ -237,34 +237,68 @@ serve(async (req) => {
 
             const position = (count || 0) + 1;
 
-            await supabase.from("order_queue").insert({
-              order_id: order.id,
-              driver_telegram_id: driverId,
-              queue_position: position,
-            });
+            // Maksimum 3 ta o'chert
+            if (position > 3) {
+              await callTelegram("answerCallbackQuery", {
+                callback_query_id: callbackQuery.id,
+                text: "❌ O'chert to'lgan! Maksimum 3 ta haydovchi navbatga turishi mumkin.",
+                show_alert: true,
+              });
+            } else {
+              await supabase.from("order_queue").insert({
+                order_id: order.id,
+                driver_telegram_id: driverId,
+                queue_position: position,
+              });
 
-            // Xabar textini yangilash
-            const currentText = callbackQuery.message?.text || "";
-            const newText = `${currentText}\n\n${position}-o'chert: @${callbackQuery.from.username || callbackQuery.from.first_name}`;
+              // Barcha navbatdagilarni olish
+              const { data: allQueue } = await supabase
+                .from("order_queue")
+                .select("*")
+                .eq("order_id", order.id)
+                .order("queue_position", { ascending: true });
 
-            await callTelegram("editMessageText", {
-              chat_id: chatId,
-              message_id: messageId,
-              text: newText,
-              reply_markup: {
-                inline_keyboard: [[{ text: "🙋 Men gaplashib ko'ray", callback_data: callbackData }]],
-              },
-            });
+              // Xabar textini yangilash - navbatni ko'rsatish
+              const originalText = callbackQuery.message?.text?.split("\n\n📋")[0] || callbackQuery.message?.text || "";
+              let queueText = "\n\n📋 Navbat:";
+              
+              for (const q of allQueue || []) {
+                const isCurrentTurn = q.queue_position === 1 && q.status === "notified";
+                const statusIcon = isCurrentTurn ? "🔔" : (q.status === "waiting" ? "⏳" : "");
+                // Get driver info
+                const { data: driverInfo } = await supabase
+                  .from("bot_users")
+                  .select("username, full_name")
+                  .eq("telegram_id", q.driver_telegram_id)
+                  .single();
+                const driverName = driverInfo?.username ? `@${driverInfo.username}` : driverInfo?.full_name || "Haydovchi";
+                queueText += `\n${q.queue_position}. ${driverName} ${statusIcon}`;
+              }
 
-            // 1-o'chertga darhol yuborish
-            if (position === 1) {
-              await sendToDriver(order, driverId);
+              const newText = `${originalText}${queueText}`;
+
+              // Tugmani o'chirish agar 3 ta bo'lsa
+              const replyMarkup = position < 3 
+                ? { inline_keyboard: [[{ text: "🙋 Men gaplashib ko'ray", callback_data: callbackData }]] }
+                : { inline_keyboard: [] };
+
+              await callTelegram("editMessageText", {
+                chat_id: chatId,
+                message_id: messageId,
+                text: newText,
+                reply_markup: replyMarkup,
+              });
+
+              // 1-o'chertga darhol yuborish
+              if (position === 1) {
+                await sendToDriver(order, driverId);
+              }
+
+              await callTelegram("answerCallbackQuery", {
+                callback_query_id: callbackQuery.id,
+                text: `Siz ${position}-o'chertda turibsiz!`,
+              });
             }
-
-            await callTelegram("answerCallbackQuery", {
-              callback_query_id: callbackQuery.id,
-              text: `Siz ${position}-o'chertda turibsiz!`,
-            });
           }
         }
       } else if (callbackData.startsWith("accept_")) {
@@ -306,14 +340,20 @@ serve(async (req) => {
           const { data: order } = await supabase.from("orders").select("*").eq("id", orderId).single();
           if (order) {
             await sendToDriver(order, nextDriver.driver_telegram_id);
+            
+            // Guruhdagi xabarni yangilash - kim navbatda ekanini ko'rsatish
+            await updateGroupMessageQueue(order);
           }
         } else {
           // Hech kim qolmadi - grupaga qaytarish
           const { data: order } = await supabase.from("orders").select("*").eq("id", orderId).single();
           if (order) {
+            // Eski navbatni tozalash
+            await supabase.from("order_queue").delete().eq("order_id", orderId);
+            
             await callTelegram("sendMessage", {
               chat_id: DRIVERS_GROUP_ID,
-              text: `⚠️ Buyurtma qaytarildi (hech kim qabul qilmadi):\n\n${hidePhoneNumber(order.message_text)}`,
+              text: `⚠️ Buyurtma qaytarildi (3 ta haydovchi ham qabul qilmadi):\n\n${hidePhoneNumber(order.message_text)}`,
               reply_markup: {
                 inline_keyboard: [[{ text: "🙋 Men gaplashib ko'ray", callback_data: `claim_${order.order_type}` }]],
               },
@@ -605,4 +645,45 @@ async function sendToDriver(order: any, driverTelegramId: number) {
       .eq("order_id", order.id)
       .eq("driver_telegram_id", driverTelegramId);
   }
+}
+
+// Guruhdagi xabarni navbat holati bilan yangilash
+async function updateGroupMessageQueue(order: any) {
+  const { data: allQueue } = await supabase
+    .from("order_queue")
+    .select("*")
+    .eq("order_id", order.id)
+    .order("queue_position", { ascending: true });
+
+  let queueText = "\n\n📋 Navbat:";
+  
+  for (const q of allQueue || []) {
+    const isCurrentTurn = q.status === "notified";
+    const isCancelled = q.status === "cancelled";
+    const statusIcon = isCurrentTurn ? "🔔 (navbati)" : (isCancelled ? "❌" : "⏳");
+    
+    const { data: driverInfo } = await supabase
+      .from("bot_users")
+      .select("username, full_name")
+      .eq("telegram_id", q.driver_telegram_id)
+      .single();
+    const driverName = driverInfo?.username ? `@${driverInfo.username}` : driverInfo?.full_name || "Haydovchi";
+    queueText += `\n${q.queue_position}. ${driverName} ${statusIcon}`;
+  }
+
+  const typeEmoji = order.order_type === "taxi" ? "🚕" : "📦";
+  const baseText = `${typeEmoji} Yangi ${order.order_type === "taxi" ? "Taxi zakaz" : "Pochta"}\n\n${hidePhoneNumber(order.message_text)}`;
+
+  // Agar hamma cancelled bo'lsa, tugmani ko'rsatmaslik
+  const activeQueue = (allQueue || []).filter(q => q.status !== "cancelled");
+  const replyMarkup = activeQueue.length > 0 && activeQueue.length < 3
+    ? { inline_keyboard: [[{ text: "🙋 Men gaplashib ko'ray", callback_data: `claim_${order.order_type}` }]] }
+    : { inline_keyboard: [] };
+
+  await callTelegram("editMessageText", {
+    chat_id: DRIVERS_GROUP_ID,
+    message_id: order.group_message_id,
+    text: baseText + queueText,
+    reply_markup: replyMarkup,
+  });
 }
