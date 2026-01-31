@@ -417,10 +417,42 @@ serve(async (req) => {
     const telegramUser = message.from;
     const chatType = message.chat.type;
 
-    // Guruhda oddiy xabarlarni e'tiborsiz qoldirish (faqat private chatda javob berish)
+    // Guruhda xabarlarni monitoring qilish
     if (chatType === "group" || chatType === "supergroup") {
-      // Guruhda faqat inline button callback'larga javob beramiz (yuqorida)
-      // Oddiy text xabarlarni e'tiborsiz qoldiramiz
+      // Kuzatiladigan guruhmi tekshirish
+      const { data: watchedGroup } = await supabase
+        .from("watched_groups")
+        .select("*")
+        .eq("group_id", chatId)
+        .single();
+
+      if (watchedGroup && text) {
+        // Kalit so'zlarni olish
+        const { data: keywords } = await supabase.from("keywords").select("keyword");
+        const keywordList = keywords?.map((k) => k.keyword.toLowerCase()) || [];
+        
+        const lowerText = text.toLowerCase();
+        const hasKeyword = keywordList.some((keyword) => lowerText.includes(keyword));
+
+        if (hasKeyword) {
+          // Xabarni haydovchilar guruhiga yuborish
+          const userMention = message.from?.username 
+            ? `@${message.from.username}` 
+            : message.from?.first_name || "Foydalanuvchi";
+
+          const forwardText = `🔔 Guruhdan topildi!\n📍 Guruh: ${watchedGroup.group_name || chatId}\n\n${text}\n\n👤 ${userMention}`;
+
+          await callTelegram("sendMessage", {
+            chat_id: DRIVERS_GROUP_ID,
+            text: forwardText,
+            reply_markup: {
+              inline_keyboard: [[{ text: "🙋 Men gaplashib ko'ray", callback_data: "claim_keyword" }]],
+            },
+          });
+        }
+      }
+      
+      // Guruhda boshqa javob bermaymiz
       return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
