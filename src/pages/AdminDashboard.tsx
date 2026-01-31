@@ -5,7 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle, Settings } from "lucide-react";
+import { toast } from "sonner";
 
 interface Stats {
   totalUsers: number;
@@ -35,6 +38,11 @@ interface BotUser {
   created_at: string;
 }
 
+interface BotSetting {
+  setting_key: string;
+  setting_value: string;
+}
+
 const BOT_USERNAME = "@ToshkentXorazm_TaxiBot";
 const BOT_URL = "https://t.me/ToshkentXorazm_TaxiBot";
 
@@ -51,6 +59,8 @@ export default function AdminDashboard() {
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [users, setUsers] = useState<BotUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [driverRegistrationEnabled, setDriverRegistrationEnabled] = useState(true);
+  const [settingsLoading, setSettingsLoading] = useState(false);
 
   useEffect(() => {
     // Check auth
@@ -60,7 +70,40 @@ export default function AdminDashboard() {
       return;
     }
     fetchData();
+    fetchSettings();
   }, [navigate]);
+
+  const fetchSettings = async () => {
+    const { data } = await supabase
+      .from("bot_settings")
+      .select("*")
+      .eq("setting_key", "driver_registration_enabled")
+      .single();
+    
+    if (data) {
+      setDriverRegistrationEnabled(data.setting_value === "true");
+    }
+  };
+
+  const handleToggleDriverRegistration = async (enabled: boolean) => {
+    setSettingsLoading(true);
+    try {
+      const { error } = await supabase
+        .from("bot_settings")
+        .update({ setting_value: enabled ? "true" : "false" })
+        .eq("setting_key", "driver_registration_enabled");
+      
+      if (error) throw error;
+      
+      setDriverRegistrationEnabled(enabled);
+      toast.success(enabled ? "Haydovchi ro'yxati yoqildi" : "Haydovchi ro'yxati o'chirildi");
+    } catch (error) {
+      console.error("Error updating setting:", error);
+      toast.error("Xatolik yuz berdi");
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
 
   const handleLogout = () => {
     sessionStorage.removeItem("admin_auth");
@@ -149,6 +192,37 @@ export default function AdminDashboard() {
             </Button>
           </div>
         </div>
+
+        {/* Settings Card */}
+        <Card className="bg-zinc-900 border-zinc-800 mb-8">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-taxi-yellow flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              Sozlamalar
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <Label htmlFor="driver-toggle" className="text-white font-medium">
+                  🚖 Haydovchi Bo'lish
+                </Label>
+                <p className="text-sm text-zinc-400">
+                  {driverRegistrationEnabled 
+                    ? "Haydovchi ro'yxatdan o'tish yoqilgan" 
+                    : "Haydovchi ro'yxatdan o'tish o'chirilgan - faqat taxi zakaz va pochta ko'rinadi"}
+                </p>
+              </div>
+              <Switch
+                id="driver-toggle"
+                checked={driverRegistrationEnabled}
+                onCheckedChange={handleToggleDriverRegistration}
+                disabled={settingsLoading}
+                className="data-[state=checked]:bg-taxi-yellow"
+              />
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">

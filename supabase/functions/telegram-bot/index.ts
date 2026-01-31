@@ -38,6 +38,16 @@ async function getText(key: string): Promise<string> {
   return data?.text_value || "";
 }
 
+// Setting olish
+async function getSetting(key: string): Promise<string> {
+  const { data } = await supabase
+    .from("bot_settings")
+    .select("setting_value")
+    .eq("setting_key", key)
+    .single();
+  return data?.setting_value || "";
+}
+
 // Telegram API chaqirish
 async function callTelegram(method: string, data: any) {
   const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}`, {
@@ -95,15 +105,24 @@ async function setUserState(telegramId: number, state: string) {
 // Asosiy menyu yuborish
 async function sendMainMenu(chatId: number, fullName: string) {
   const text = (await getText("main_menu")).replace("{fullname}", fullName);
+  const driverEnabled = await getSetting("driver_registration_enabled");
+  
+  const keyboard = driverEnabled === "true" 
+    ? [
+        [{ text: "🚕 Taxi zakaz qilish" }],
+        [{ text: "🚖 Haydovchi Bo'lish" }],
+        [{ text: "📦 Pochta yuborish" }],
+      ]
+    : [
+        [{ text: "🚕 Taxi zakaz qilish" }],
+        [{ text: "📦 Pochta yuborish" }],
+      ];
+  
   await callTelegram("sendMessage", {
     chat_id: chatId,
     text,
     reply_markup: {
-      keyboard: [
-        [{ text: "🚕 Taxi zakaz qilish" }],
-        [{ text: "🚖 Haydovchi Bo'lish" }],
-        [{ text: "📦 Pochta yuborish" }],
-      ],
+      keyboard,
       resize_keyboard: true,
     },
   });
@@ -345,19 +364,32 @@ serve(async (req) => {
             await updateGroupMessageQueue(order);
           }
         } else {
-          // Hech kim qolmadi - grupaga qaytarish
+          // Hech kim qolmadi - grupaga to'liq ma'lumot bilan qaytarish (tugmasiz)
           const { data: order } = await supabase.from("orders").select("*").eq("id", orderId).single();
           if (order) {
             // Eski navbatni tozalash
             await supabase.from("order_queue").delete().eq("order_id", orderId);
             
+            // Mijoz ma'lumotlarini olish
+            const { data: customer } = await supabase
+              .from("bot_users")
+              .select("*")
+              .eq("telegram_id", order.telegram_id)
+              .single();
+            
+            const typeEmoji = order.order_type === "taxi" ? "🚕" : "📦";
+            const customerInfo = customer?.phone_number 
+              ? `📞 Telefon: ${customer.phone_number}\n👤 Ism: ${customer.full_name || "Noma'lum"}` 
+              : `👤 ${customer?.full_name || "Noma'lum"}`;
+            
+            // To'liq ma'lumot bilan, tugmasiz yuborish
             await callTelegram("sendMessage", {
               chat_id: DRIVERS_GROUP_ID,
-              text: `⚠️ Buyurtma qaytarildi (3 ta haydovchi ham qabul qilmadi):\n\n${hidePhoneNumber(order.message_text)}`,
-              reply_markup: {
-                inline_keyboard: [[{ text: "🙋 Men gaplashib ko'ray", callback_data: `claim_${order.order_type}` }]],
-              },
+              text: `⚠️ ${typeEmoji} Buyurtma qaytarildi!\n\n3 ta haydovchi ham qabul qilmadi\n\n📍 ${order.message_text}\n\n${customerInfo}`,
             });
+            
+            // Buyurtma statusini yangilash
+            await supabase.from("orders").update({ status: "rejected" }).eq("id", orderId);
           }
         }
 
@@ -451,7 +483,16 @@ serve(async (req) => {
         },
       });
     } else if (text === "🚖 Haydovchi Bo'lish") {
-      await showDriverMenu(chatId);
+      const driverEnabled = await getSetting("driver_registration_enabled");
+      if (driverEnabled === "true") {
+        await showDriverMenu(chatId);
+      } else {
+        await callTelegram("sendMessage", {
+          chat_id: chatId,
+          text: "⚠️ Haydovchi ro'yxatdan o'tish hozircha yopiq.",
+        });
+        await sendMainMenu(chatId, user.full_name || telegramUser.first_name);
+      }
     } else if (text === "ℹ️ VIP haqida" || text === "⭐ VIPga qo'shilish") {
       const vipText = await getText("vip_info");
       await callTelegram("sendMessage", { chat_id: chatId, text: vipText });
@@ -594,20 +635,8 @@ serve(async (req) => {
         await setUserState(telegramUser.id, "");
         await sendMainMenu(chatId, user.full_name || telegramUser.first_name);
       } else {
-        // Noma'lum xabar
-        const mainText = (await getText("main_menu")).replace("{fullname}", user.full_name || telegramUser.first_name);
-        await callTelegram("sendMessage", {
-          chat_id: chatId,
-          text: mainText,
-          reply_markup: {
-            keyboard: [
-              [{ text: "🚕 Taxi zakaz qilish" }],
-              [{ text: "🚖 Haydovchi Bo'lish" }],
-              [{ text: "📦 Pochta yuborish" }],
-            ],
-            resize_keyboard: true,
-          },
-        });
+        // Noma'lum xabar - asosiy menyu yuborish
+        await sendMainMenu(chatId, user.full_name || telegramUser.first_name);
       }
     }
 
