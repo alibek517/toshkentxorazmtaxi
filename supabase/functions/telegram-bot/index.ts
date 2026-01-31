@@ -66,11 +66,30 @@ async function getOrCreateUser(telegramUser: any) {
       telegram_id: telegramUser.id,
       full_name: telegramUser.first_name + (telegramUser.last_name ? " " + telegramUser.last_name : ""),
       username: telegramUser.username,
+      user_state: "",
     })
     .select()
     .single();
 
   return newUser;
+}
+
+// User state olish
+async function getUserState(telegramId: number): Promise<string> {
+  const { data } = await supabase
+    .from("bot_users")
+    .select("user_state")
+    .eq("telegram_id", telegramId)
+    .single();
+  return data?.user_state || "";
+}
+
+// User state saqlash
+async function setUserState(telegramId: number, state: string) {
+  await supabase
+    .from("bot_users")
+    .update({ user_state: state })
+    .eq("telegram_id", telegramId);
 }
 
 // Asosiy menyu yuborish
@@ -168,9 +187,6 @@ async function showDriverMenu(chatId: number) {
     },
   });
 }
-
-// User state saqlash
-const userStates: Record<number, string> = {};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -365,7 +381,7 @@ serve(async (req) => {
       const infoText = await getText("bot_info");
       await callTelegram("sendMessage", { chat_id: chatId, text: infoText });
     } else if (text === "🚕 Taxi zakaz qilish") {
-      userStates[chatId] = "waiting_taxi_order";
+      await setUserState(telegramUser.id, "waiting_taxi_order");
       const taxiText = await getText("taxi_order");
       await callTelegram("sendMessage", {
         chat_id: chatId,
@@ -376,7 +392,7 @@ serve(async (req) => {
         },
       });
     } else if (text === "📦 Pochta yuborish") {
-      userStates[chatId] = "waiting_parcel_order";
+      await setUserState(telegramUser.id, "waiting_parcel_order");
       const parcelText = await getText("parcel_order");
       await callTelegram("sendMessage", {
         chat_id: chatId,
@@ -392,7 +408,7 @@ serve(async (req) => {
       const vipText = await getText("vip_info");
       await callTelegram("sendMessage", { chat_id: chatId, text: vipText });
     } else if (text === "🔙 Orqaga" || text === "🔙 Asosiy menyu") {
-      userStates[chatId] = "";
+      await setUserState(telegramUser.id, "");
       if (user.is_admin) {
         await sendMainMenu(chatId, user.full_name || telegramUser.first_name);
       } else {
@@ -401,8 +417,10 @@ serve(async (req) => {
     }
     // Admin komandalar
     else if (user.is_admin) {
+      const currentState = await getUserState(telegramUser.id);
+      
       if (text === "➕ Guruh qo'shish") {
-        userStates[chatId] = "waiting_group_id";
+        await setUserState(telegramUser.id, "waiting_group_id");
         await callTelegram("sendMessage", {
           chat_id: chatId,
           text: "Guruh ID sini yuboring (masalan: -1001234567890):",
@@ -412,7 +430,7 @@ serve(async (req) => {
           },
         });
       } else if (text === "➕ Kalit so'zlar") {
-        userStates[chatId] = "waiting_keywords";
+        await setUserState(telegramUser.id, "waiting_keywords");
         const { data: keywords } = await supabase.from("keywords").select("keyword");
         const currentKeywords = keywords?.map((k) => k.keyword).join(", ") || "Yo'q";
         await callTelegram("sendMessage", {
@@ -430,7 +448,7 @@ serve(async (req) => {
           text: `👥 Jami foydalanuvchilar: ${count || 0}`,
         });
       } else if (text === "🚫 Foydalanuvchini bloklash") {
-        userStates[chatId] = "waiting_block_phone";
+        await setUserState(telegramUser.id, "waiting_block_phone");
         await callTelegram("sendMessage", {
           chat_id: chatId,
           text: "Qaysi telefon raqamni bloklaysiz? (masalan: +998901234567):",
@@ -440,7 +458,7 @@ serve(async (req) => {
           },
         });
       } else if (text === "➕ Admin qo'shish") {
-        userStates[chatId] = "waiting_admin_id";
+        await setUserState(telegramUser.id, "waiting_admin_id");
         await callTelegram("sendMessage", {
           chat_id: chatId,
           text: "Admin qo'shish uchun Telegram ID yuboring:",
@@ -452,7 +470,7 @@ serve(async (req) => {
       } else if (text === "📝 Textlarni tahrirlash") {
         const { data: texts } = await supabase.from("bot_texts").select("text_key");
         const textList = texts?.map((t, i) => `${i + 1}. ${t.text_key}`).join("\n") || "";
-        userStates[chatId] = "waiting_text_key";
+        await setUserState(telegramUser.id, "waiting_text_key");
         await callTelegram("sendMessage", {
           chat_id: chatId,
           text: `Qaysi textni tahrirlamoqchisiz?\n\n${textList}\n\nText nomini yozing:`,
@@ -463,7 +481,7 @@ serve(async (req) => {
         });
       }
       // Admin state handlers
-      else if (userStates[chatId] === "waiting_group_id") {
+      else if (currentState === "waiting_group_id") {
         const groupId = parseInt(text);
         if (!isNaN(groupId)) {
           await supabase.from("watched_groups").upsert({ group_id: groupId });
@@ -471,22 +489,22 @@ serve(async (req) => {
         } else {
           await callTelegram("sendMessage", { chat_id: chatId, text: "❌ Noto'g'ri ID!" });
         }
-        userStates[chatId] = "";
+        await setUserState(telegramUser.id, "");
         await showAdminMenu(chatId);
-      } else if (userStates[chatId] === "waiting_keywords") {
+      } else if (currentState === "waiting_keywords") {
         const keywords = text.split(",").map((k: string) => k.trim()).filter((k: string) => k);
         for (const keyword of keywords) {
           await supabase.from("keywords").upsert({ keyword });
         }
         await callTelegram("sendMessage", { chat_id: chatId, text: `✅ ${keywords.length} ta kalit so'z qo'shildi!` });
-        userStates[chatId] = "";
+        await setUserState(telegramUser.id, "");
         await showAdminMenu(chatId);
-      } else if (userStates[chatId] === "waiting_block_phone") {
+      } else if (currentState === "waiting_block_phone") {
         await supabase.from("bot_users").update({ is_blocked: true }).ilike("phone_number", `%${text.replace(/\D/g, "")}%`);
         await callTelegram("sendMessage", { chat_id: chatId, text: "✅ Foydalanuvchi bloklandi!" });
-        userStates[chatId] = "";
+        await setUserState(telegramUser.id, "");
         await showAdminMenu(chatId);
-      } else if (userStates[chatId] === "waiting_admin_id") {
+      } else if (currentState === "waiting_admin_id") {
         const adminId = parseInt(text);
         if (!isNaN(adminId)) {
           await supabase.from("bot_users").update({ is_admin: true }).eq("telegram_id", adminId);
@@ -494,52 +512,55 @@ serve(async (req) => {
         } else {
           await callTelegram("sendMessage", { chat_id: chatId, text: "❌ Noto'g'ri ID!" });
         }
-        userStates[chatId] = "";
+        await setUserState(telegramUser.id, "");
         await showAdminMenu(chatId);
-      } else if (userStates[chatId] === "waiting_text_key") {
-        userStates[chatId] = `editing_text_${text}`;
+      } else if (currentState === "waiting_text_key") {
+        await setUserState(telegramUser.id, `editing_text_${text}`);
         const { data: textData } = await supabase.from("bot_texts").select("text_value").eq("text_key", text).single();
         await callTelegram("sendMessage", {
           chat_id: chatId,
           text: `Hozirgi text:\n\n${textData?.text_value || "Topilmadi"}\n\nYangi textni yozing:`,
         });
-      } else if (userStates[chatId]?.startsWith("editing_text_")) {
-        const textKey = userStates[chatId]!.replace("editing_text_", "");
+      } else if (currentState?.startsWith("editing_text_")) {
+        const textKey = currentState.replace("editing_text_", "");
         await supabase.from("bot_texts").update({ text_value: text }).eq("text_key", textKey);
         await callTelegram("sendMessage", { chat_id: chatId, text: "✅ Text yangilandi!" });
-        userStates[chatId] = "";
+        await setUserState(telegramUser.id, "");
         await showAdminMenu(chatId);
       }
     }
     // Buyurtma yozish
-    else if (userStates[chatId] === "waiting_taxi_order") {
-      await sendOrderToGroup(user, text, "taxi");
-      const sentText = await getText("order_sent");
-      await callTelegram("sendMessage", { chat_id: chatId, text: sentText });
-      userStates[chatId] = "";
-      await sendMainMenu(chatId, user.full_name || telegramUser.first_name);
-    } else if (userStates[chatId] === "waiting_parcel_order") {
-      await sendOrderToGroup(user, text, "parcel");
-      const sentText = await getText("order_sent");
-      await callTelegram("sendMessage", { chat_id: chatId, text: sentText });
-      userStates[chatId] = "";
-      await sendMainMenu(chatId, user.full_name || telegramUser.first_name);
-    }
-    // Noma'lum xabar
     else {
-      const mainText = (await getText("main_menu")).replace("{fullname}", user.full_name || telegramUser.first_name);
-      await callTelegram("sendMessage", {
-        chat_id: chatId,
-        text: mainText,
-        reply_markup: {
-          keyboard: [
-            [{ text: "🚕 Taxi zakaz qilish" }],
-            [{ text: "🚖 Haydovchi Bo'lish" }],
-            [{ text: "📦 Pochta yuborish" }],
-          ],
-          resize_keyboard: true,
-        },
-      });
+      const currentState = await getUserState(telegramUser.id);
+      
+      if (currentState === "waiting_taxi_order") {
+        await sendOrderToGroup(user, text, "taxi");
+        const sentText = await getText("order_sent");
+        await callTelegram("sendMessage", { chat_id: chatId, text: sentText });
+        await setUserState(telegramUser.id, "");
+        await sendMainMenu(chatId, user.full_name || telegramUser.first_name);
+      } else if (currentState === "waiting_parcel_order") {
+        await sendOrderToGroup(user, text, "parcel");
+        const sentText = await getText("order_sent");
+        await callTelegram("sendMessage", { chat_id: chatId, text: sentText });
+        await setUserState(telegramUser.id, "");
+        await sendMainMenu(chatId, user.full_name || telegramUser.first_name);
+      } else {
+        // Noma'lum xabar
+        const mainText = (await getText("main_menu")).replace("{fullname}", user.full_name || telegramUser.first_name);
+        await callTelegram("sendMessage", {
+          chat_id: chatId,
+          text: mainText,
+          reply_markup: {
+            keyboard: [
+              [{ text: "🚕 Taxi zakaz qilish" }],
+              [{ text: "🚖 Haydovchi Bo'lish" }],
+              [{ text: "📦 Pochta yuborish" }],
+            ],
+            resize_keyboard: true,
+          },
+        });
+      }
     }
 
     return new Response(JSON.stringify({ ok: true }), {
