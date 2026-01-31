@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Users, Package, Car, Clock, CheckCircle, XCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle } from "lucide-react";
 
 interface Stats {
   totalUsers: number;
@@ -33,7 +35,11 @@ interface BotUser {
   created_at: string;
 }
 
+const BOT_USERNAME = "@ToshkentXorazm_TaxiBot";
+const BOT_URL = "https://t.me/ToshkentXorazm_TaxiBot";
+
 export default function AdminDashboard() {
+  const navigate = useNavigate();
   const [stats, setStats] = useState<Stats>({
     totalUsers: 0,
     totalOrders: 0,
@@ -47,8 +53,19 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Check auth
+    const isAuth = sessionStorage.getItem("admin_auth");
+    if (!isAuth) {
+      navigate("/admin/login");
+      return;
+    }
     fetchData();
-  }, []);
+  }, [navigate]);
+
+  const handleLogout = () => {
+    sessionStorage.removeItem("admin_auth");
+    navigate("/admin/login");
+  };
 
   const fetchData = async () => {
     try {
@@ -108,9 +125,30 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-taxi-dark p-6">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold text-taxi-yellow mb-8">
-          🚕 Admin Dashboard
-        </h1>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+          <h1 className="text-3xl font-bold text-taxi-yellow">
+            🚕 Admin Dashboard
+          </h1>
+          <div className="flex items-center gap-3">
+            <a 
+              href={BOT_URL} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+            >
+              <MessageCircle className="h-4 w-4" />
+              {BOT_USERNAME}
+            </a>
+            <Button 
+              variant="outline" 
+              className="border-zinc-700 text-zinc-400 hover:text-white"
+              onClick={handleLogout}
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Chiqish
+            </Button>
+          </div>
+        </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
