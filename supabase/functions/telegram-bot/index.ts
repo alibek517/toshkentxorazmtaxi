@@ -176,6 +176,9 @@ async function sendOrderToGroup(user: any, orderText: string, orderType: string)
 // Admin menuini ko'rsatish
 async function showAdminMenu(chatId: number) {
   const text = await getText("admin_welcome");
+  const driverEnabled = await getSetting("driver_registration_enabled");
+  const toggleText = driverEnabled === "true" ? "🚖❌ Haydovchi Bo'lishni O'chirish" : "🚖✅ Haydovchi Bo'lishni Yoqish";
+  
   await callTelegram("sendMessage", {
     chat_id: chatId,
     text,
@@ -184,6 +187,7 @@ async function showAdminMenu(chatId: number) {
         [{ text: "➕ Guruh qo'shish" }, { text: "➕ Kalit so'zlar" }],
         [{ text: "👥 Foydalanuvchilar" }, { text: "📝 Textlarni tahrirlash" }],
         [{ text: "🚫 Foydalanuvchini bloklash" }, { text: "➕ Admin qo'shish" }],
+        [{ text: toggleText }],
         [{ text: "🔙 Asosiy menyu" }],
       ],
       resize_keyboard: true,
@@ -508,7 +512,27 @@ serve(async (req) => {
     else if (user.is_admin) {
       const currentState = await getUserState(telegramUser.id);
       
-      if (text === "➕ Guruh qo'shish") {
+      if (text === "🚖❌ Haydovchi Bo'lishni O'chirish") {
+        await supabase
+          .from("bot_settings")
+          .update({ setting_value: "false" })
+          .eq("setting_key", "driver_registration_enabled");
+        await callTelegram("sendMessage", {
+          chat_id: chatId,
+          text: "✅ Haydovchi bo'lish o'chirildi!",
+        });
+        await showAdminMenu(chatId);
+      } else if (text === "🚖✅ Haydovchi Bo'lishni Yoqish") {
+        await supabase
+          .from("bot_settings")
+          .update({ setting_value: "true" })
+          .eq("setting_key", "driver_registration_enabled");
+        await callTelegram("sendMessage", {
+          chat_id: chatId,
+          text: "✅ Haydovchi bo'lish yoqildi!",
+        });
+        await showAdminMenu(chatId);
+      } else if (text === "➕ Guruh qo'shish") {
         await setUserState(telegramUser.id, "waiting_group_id");
         await callTelegram("sendMessage", {
           chat_id: chatId,
