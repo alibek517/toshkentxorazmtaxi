@@ -57,6 +57,11 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        taxi: {
+          yellow: "hsl(var(--taxi-yellow))",
+          dark: "hsl(var(--taxi-dark))",
+          green: "hsl(var(--taxi-green))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

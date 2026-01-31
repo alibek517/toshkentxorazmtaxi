@@ -14,7 +14,176 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      bot_texts: {
+        Row: {
+          created_at: string
+          id: string
+          text_key: string
+          text_value: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          text_key: string
+          text_value: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          text_key?: string
+          text_value?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      bot_users: {
+        Row: {
+          created_at: string
+          full_name: string | null
+          id: string
+          is_admin: boolean
+          is_blocked: boolean
+          phone_number: string | null
+          telegram_id: number
+          updated_at: string
+          username: string | null
+        }
+        Insert: {
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          is_admin?: boolean
+          is_blocked?: boolean
+          phone_number?: string | null
+          telegram_id: number
+          updated_at?: string
+          username?: string | null
+        }
+        Update: {
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          is_admin?: boolean
+          is_blocked?: boolean
+          phone_number?: string | null
+          telegram_id?: number
+          updated_at?: string
+          username?: string | null
+        }
+        Relationships: []
+      }
+      keywords: {
+        Row: {
+          created_at: string
+          id: string
+          keyword: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          keyword: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          keyword?: string
+        }
+        Relationships: []
+      }
+      order_queue: {
+        Row: {
+          created_at: string
+          driver_message_id: number | null
+          driver_telegram_id: number
+          id: string
+          order_id: string
+          queue_position: number
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          driver_message_id?: number | null
+          driver_telegram_id: number
+          id?: string
+          order_id: string
+          queue_position: number
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          driver_message_id?: number | null
+          driver_telegram_id?: number
+          id?: string
+          order_id?: string
+          queue_position?: number
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_queue_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      orders: {
+        Row: {
+          accepted_by_telegram_id: number | null
+          created_at: string
+          group_message_id: number | null
+          id: string
+          message_text: string
+          order_type: string
+          status: string
+          telegram_id: number
+        }
+        Insert: {
+          accepted_by_telegram_id?: number | null
+          created_at?: string
+          group_message_id?: number | null
+          id?: string
+          message_text: string
+          order_type: string
+          status?: string
+          telegram_id: number
+        }
+        Update: {
+          accepted_by_telegram_id?: number | null
+          created_at?: string
+          group_message_id?: number | null
+          id?: string
+          message_text?: string
+          order_type?: string
+          status?: string
+          telegram_id?: number
+        }
+        Relationships: []
+      }
+      watched_groups: {
+        Row: {
+          created_at: string
+          group_id: number
+          group_name: string | null
+          id: string
+        }
+        Insert: {
+          created_at?: string
+          group_id: number
+          group_name?: string | null
+          id?: string
+        }
+        Update: {
+          created_at?: string
+          group_id?: number
+          group_name?: string | null
+          id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
