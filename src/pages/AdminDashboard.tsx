@@ -12,6 +12,7 @@ import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle
 import { toast } from "sonner";
 import UserBotManager from "@/components/admin/UserBotManager";
 import UserbotAccountManager from "@/components/admin/UserbotAccountManager";
+import GroupStatistics from "@/components/admin/GroupStatistics";
 
 interface Stats {
   totalUsers: number;
@@ -501,6 +502,9 @@ export default function AdminDashboard() {
             </Table>
           </CardContent>
         </Card>
+
+        {/* Group Statistics */}
+        <GroupStatistics />
 
         {/* UserBot Accounts */}
         <UserbotAccountManager />
