@@ -93,7 +93,8 @@ async def get_all_accounts():
         return []
     
     try:
-        result = supabase.table("userbot_accounts").select("*").in_("status", ["pending", "active", "connecting"]).execute()
+        # Barcha akkauntlarni olish (stopped va error ham qayta urinish uchun)
+        result = supabase.table("userbot_accounts").select("*").neq("status", "deleted").execute()
         return result.data
     except Exception as e:
         print(f"❌ Akkauntlarni olishda xato: {e}")
@@ -160,11 +161,32 @@ async def get_blocked_group_ids():
     try:
         result = supabase.table("watched_groups").select("group_id").eq("is_blocked", True).execute()
         blocked = {normalize_chat_id(g["group_id"]) for g in result.data}
+        # Haydovchilar guruhini har doim bloklash
         blocked.add(normalize_chat_id(DRIVERS_GROUP_ID))
+        print(f"🔒 Bloklangan guruhlar: {len(blocked)} ta (ID lar: {blocked})")
         return blocked
     except Exception as e:
         print(f"❌ Bloklangan guruhlarni olishda xato: {e}")
         return {normalize_chat_id(DRIVERS_GROUP_ID)}
+
+
+async def get_active_group_ids():
+    """Faol (bloklanmagan) guruh ID larini olish"""
+    global supabase
+    
+    if not supabase:
+        return set()
+    
+    try:
+        result = supabase.table("watched_groups").select("group_id, group_name").eq("is_blocked", False).execute()
+        active = {normalize_chat_id(g["group_id"]) for g in result.data}
+        print(f"✅ Faol guruhlar: {len(active)} ta")
+        for g in result.data:
+            print(f"   📍 {g['group_name']} ({g['group_id']})")
+        return active
+    except Exception as e:
+        print(f"❌ Faol guruhlarni olishda xato: {e}")
+        return set()
 
 
 async def refresh_keywords():
@@ -239,14 +261,14 @@ def create_message_handler(phone: str):
         """Guruh xabarlarini qayta ishlash"""
         global last_cache_update, blocked_groups_cache, last_blocked_cache_update
         
+        chat_id_normalized = normalize_chat_id(message.chat.id)
+        group_name = getattr(message.chat, "title", None) or f"Chat {message.chat.id}"
+        
         # ===== LOOP OLDINI OLISH =====
         
         # 1. Haydovchilar guruhidan kelgan xabarni o'tkazib yuborish
-        try:
-            if normalize_chat_id(message.chat.id) == normalize_chat_id(DRIVERS_GROUP_ID):
-                return
-        except Exception:
-            pass
+        if chat_id_normalized == normalize_chat_id(DRIVERS_GROUP_ID):
+            return
         
         # 2. Outgoing xabarlarni tekshirmaslik
         if getattr(message, "outgoing", False):
@@ -260,10 +282,11 @@ def create_message_handler(phone: str):
         
         current_time = asyncio.get_event_loop().time()
         
+        # Keshni yangilash
         if current_time - last_blocked_cache_update > CACHE_TTL:
             await refresh_blocked_groups()
         
-        chat_id_normalized = normalize_chat_id(message.chat.id)
+        # Bloklangan guruhlarni o'tkazib yuborish
         if chat_id_normalized in blocked_groups_cache:
             return
         
@@ -288,7 +311,6 @@ def create_message_handler(phone: str):
         
         # ===== XABARNI HAYDOVCHILARGA YUBORISH =====
         
-        group_name = message.chat.title or "Guruh"
         user_mention = ""
         if message.from_user:
             if message.from_user.username:
@@ -410,10 +432,12 @@ async def main():
         print("❌ Supabase'ga ulanib bo'lmadi. Chiqish...")
         sys.exit(1)
     
-    # Bloklangan guruhlarni yuklash
+    # Bloklangan va faol guruhlarni yuklash
     blocked_groups_cache = await get_blocked_group_ids()
     last_blocked_cache_update = asyncio.get_event_loop().time()
-    print(f"🚫 {len(blocked_groups_cache)} ta guruh bloklangan")
+    
+    # Faol guruhlarni ham ko'rsatish
+    await get_active_group_ids()
     
     # Kalit so'zlarni yuklash
     await refresh_keywords()
