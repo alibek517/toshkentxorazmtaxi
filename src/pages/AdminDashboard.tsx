@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle, Settings } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle, Settings, Eye, Trash2, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface Stats {
@@ -38,9 +39,17 @@ interface BotUser {
   created_at: string;
 }
 
-interface BotSetting {
-  setting_key: string;
-  setting_value: string;
+interface WatchedGroup {
+  id: string;
+  group_id: number;
+  group_name: string | null;
+  created_at: string;
+}
+
+interface Keyword {
+  id: string;
+  keyword: string;
+  created_at: string;
 }
 
 const BOT_USERNAME = "@ToshkentXorazm_TaxiBot";
@@ -58,9 +67,20 @@ export default function AdminDashboard() {
   });
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [users, setUsers] = useState<BotUser[]>([]);
+  const [watchedGroups, setWatchedGroups] = useState<WatchedGroup[]>([]);
+  const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [loading, setLoading] = useState(true);
   const [driverRegistrationEnabled, setDriverRegistrationEnabled] = useState(true);
   const [settingsLoading, setSettingsLoading] = useState(false);
+  
+  // New group form
+  const [newGroupId, setNewGroupId] = useState("");
+  const [newGroupName, setNewGroupName] = useState("");
+  const [addingGroup, setAddingGroup] = useState(false);
+  
+  // New keyword form
+  const [newKeyword, setNewKeyword] = useState("");
+  const [addingKeyword, setAddingKeyword] = useState(false);
 
   useEffect(() => {
     // Check auth
@@ -71,7 +91,114 @@ export default function AdminDashboard() {
     }
     fetchData();
     fetchSettings();
+    fetchWatchedGroups();
+    fetchKeywords();
   }, [navigate]);
+
+  const fetchWatchedGroups = async () => {
+    const { data } = await supabase
+      .from("watched_groups")
+      .select("*")
+      .order("created_at", { ascending: false });
+    setWatchedGroups(data || []);
+  };
+
+  const fetchKeywords = async () => {
+    const { data } = await supabase
+      .from("keywords")
+      .select("*")
+      .order("created_at", { ascending: false });
+    setKeywords(data || []);
+  };
+
+  const handleAddGroup = async () => {
+    const groupId = parseInt(newGroupId);
+    if (isNaN(groupId)) {
+      toast.error("Noto'g'ri guruh ID");
+      return;
+    }
+    
+    setAddingGroup(true);
+    try {
+      const { error } = await supabase
+        .from("watched_groups")
+        .insert({ 
+          group_id: groupId, 
+          group_name: newGroupName || null 
+        });
+      
+      if (error) throw error;
+      
+      toast.success("Guruh qo'shildi!");
+      setNewGroupId("");
+      setNewGroupName("");
+      fetchWatchedGroups();
+    } catch (error: any) {
+      console.error("Error adding group:", error);
+      toast.error(error.message || "Xatolik yuz berdi");
+    } finally {
+      setAddingGroup(false);
+    }
+  };
+
+  const handleDeleteGroup = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from("watched_groups")
+        .delete()
+        .eq("id", id);
+      
+      if (error) throw error;
+      
+      toast.success("Guruh o'chirildi!");
+      fetchWatchedGroups();
+    } catch (error) {
+      console.error("Error deleting group:", error);
+      toast.error("Xatolik yuz berdi");
+    }
+  };
+
+  const handleAddKeyword = async () => {
+    if (!newKeyword.trim()) {
+      toast.error("Kalit so'z kiriting");
+      return;
+    }
+    
+    setAddingKeyword(true);
+    try {
+      const { error } = await supabase
+        .from("keywords")
+        .insert({ keyword: newKeyword.trim() });
+      
+      if (error) throw error;
+      
+      toast.success("Kalit so'z qo'shildi!");
+      setNewKeyword("");
+      fetchKeywords();
+    } catch (error: any) {
+      console.error("Error adding keyword:", error);
+      toast.error(error.message || "Xatolik yuz berdi");
+    } finally {
+      setAddingKeyword(false);
+    }
+  };
+
+  const handleDeleteKeyword = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from("keywords")
+        .delete()
+        .eq("id", id);
+      
+      if (error) throw error;
+      
+      toast.success("Kalit so'z o'chirildi!");
+      fetchKeywords();
+    } catch (error) {
+      console.error("Error deleting keyword:", error);
+      toast.error("Xatolik yuz berdi");
+    }
+  };
 
   const fetchSettings = async () => {
     const { data } = await supabase
@@ -298,6 +425,130 @@ export default function AdminDashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Watched Groups */}
+        <Card className="bg-zinc-900 border-zinc-800 mb-8">
+          <CardHeader>
+            <CardTitle className="text-taxi-yellow flex items-center gap-2">
+              <Eye className="h-5 w-5" />
+              Kuzatiladigan Guruhlar
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {/* Add new group form */}
+            <div className="flex flex-col sm:flex-row gap-3 mb-6">
+              <Input
+                placeholder="Guruh ID (masalan: -1001234567890)"
+                value={newGroupId}
+                onChange={(e) => setNewGroupId(e.target.value)}
+                className="bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500"
+              />
+              <Input
+                placeholder="Guruh nomi (ixtiyoriy)"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                className="bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500"
+              />
+              <Button 
+                onClick={handleAddGroup}
+                disabled={addingGroup || !newGroupId}
+                className="bg-taxi-yellow text-black hover:bg-taxi-yellow/90 shrink-0"
+              >
+                {addingGroup ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Qo'shish
+              </Button>
+            </div>
+            
+            <Table>
+              <TableHeader>
+                <TableRow className="border-zinc-800">
+                  <TableHead className="text-zinc-400">Guruh ID</TableHead>
+                  <TableHead className="text-zinc-400">Nomi</TableHead>
+                  <TableHead className="text-zinc-400">Qo'shilgan</TableHead>
+                  <TableHead className="text-zinc-400 text-right">Amallar</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {watchedGroups.map((group) => (
+                  <TableRow key={group.id} className="border-zinc-800">
+                    <TableCell className="text-white font-mono">{group.group_id}</TableCell>
+                    <TableCell className="text-zinc-300">{group.group_name || "-"}</TableCell>
+                    <TableCell className="text-zinc-400">
+                      {new Date(group.created_at).toLocaleDateString("uz-UZ")}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => handleDeleteGroup(group.id)}
+                        className="text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {watchedGroups.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center text-zinc-500">
+                      Hali guruhlar yo'q
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        {/* Keywords */}
+        <Card className="bg-zinc-900 border-zinc-800 mb-8">
+          <CardHeader>
+            <CardTitle className="text-taxi-yellow flex items-center gap-2">
+              🔑 Kalit So'zlar
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {/* Add new keyword form */}
+            <div className="flex gap-3 mb-6">
+              <Input
+                placeholder="Yangi kalit so'z"
+                value={newKeyword}
+                onChange={(e) => setNewKeyword(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddKeyword()}
+                className="bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500"
+              />
+              <Button 
+                onClick={handleAddKeyword}
+                disabled={addingKeyword || !newKeyword.trim()}
+                className="bg-taxi-yellow text-black hover:bg-taxi-yellow/90 shrink-0"
+              >
+                {addingKeyword ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Qo'shish
+              </Button>
+            </div>
+            
+            <div className="flex flex-wrap gap-2">
+              {keywords.map((kw) => (
+                <Badge 
+                  key={kw.id} 
+                  variant="secondary"
+                  className="bg-zinc-800 text-white px-3 py-1.5 flex items-center gap-2"
+                >
+                  {kw.keyword}
+                  <button 
+                    onClick={() => handleDeleteKeyword(kw.id)}
+                    className="text-red-400 hover:text-red-300"
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                  </button>
+                </Badge>
+              ))}
+              {keywords.length === 0 && (
+                <p className="text-zinc-500">Hali kalit so'zlar yo'q</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Recent Orders */}
         <Card className="bg-zinc-900 border-zinc-800 mb-8">
