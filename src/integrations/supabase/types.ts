@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_groups: {
+        Row: {
+          created_at: string
+          group_id: number
+          group_name: string | null
+          id: string
+          phone_number: string
+        }
+        Insert: {
+          created_at?: string
+          group_id: number
+          group_name?: string | null
+          id?: string
+          phone_number: string
+        }
+        Update: {
+          created_at?: string
+          group_id?: number
+          group_name?: string | null
+          id?: string
+          phone_number?: string
+        }
+        Relationships: []
+      }
       bot_settings: {
         Row: {
           created_at: string
@@ -100,6 +124,44 @@ export type Database = {
           username?: string | null
         }
         Relationships: []
+      }
+      keyword_hits: {
+        Row: {
+          created_at: string
+          group_id: number
+          group_name: string | null
+          id: string
+          keyword_id: string | null
+          message_preview: string | null
+          phone_number: string | null
+        }
+        Insert: {
+          created_at?: string
+          group_id: number
+          group_name?: string | null
+          id?: string
+          keyword_id?: string | null
+          message_preview?: string | null
+          phone_number?: string | null
+        }
+        Update: {
+          created_at?: string
+          group_id?: number
+          group_name?: string | null
+          id?: string
+          keyword_id?: string | null
+          message_preview?: string | null
+          phone_number?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "keyword_hits_keyword_id_fkey"
+            columns: ["keyword_id"]
+            isOneToOne: false
+            referencedRelation: "keywords"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       keywords: {
         Row: {
