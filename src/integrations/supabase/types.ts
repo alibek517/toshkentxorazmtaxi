@@ -226,18 +226,21 @@ export type Database = {
           group_id: number
           group_name: string | null
           id: string
+          is_blocked: boolean
         }
         Insert: {
           created_at?: string
           group_id: number
           group_name?: string | null
           id?: string
+          is_blocked?: boolean
         }
         Update: {
           created_at?: string
           group_id?: number
           group_name?: string | null
           id?: string
+          is_blocked?: boolean
         }
         Relationships: []
       }

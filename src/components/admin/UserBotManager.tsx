@@ -2,14 +2,17 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Loader2, Radio, CheckCircle, Users } from "lucide-react";
+import { Loader2, Radio, CheckCircle, Users, Ban, CheckCircle2 } from "lucide-react";
+import { toast } from "sonner";
 
 interface WatchedGroup {
   id: string;
   group_id: number;
   group_name: string | null;
   created_at: string;
+  is_blocked: boolean;
 }
 
 interface Keyword {
@@ -22,6 +25,7 @@ export default function UserBotManager() {
   const [groups, setGroups] = useState<WatchedGroup[]>([]);
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [loading, setLoading] = useState(true);
+  const [togglingGroup, setTogglingGroup] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -34,12 +38,35 @@ export default function UserBotManager() {
         supabase.from("keywords").select("*").order("created_at", { ascending: false }),
       ]);
       
-      setGroups(groupsRes.data || []);
+      setGroups((groupsRes.data as WatchedGroup[]) || []);
       setKeywords(keywordsRes.data || []);
     } catch (error) {
       console.error("Error fetching data:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toggleBlockGroup = async (groupId: string, currentBlocked: boolean) => {
+    setTogglingGroup(groupId);
+    try {
+      const { error } = await supabase
+        .from("watched_groups")
+        .update({ is_blocked: !currentBlocked })
+        .eq("id", groupId);
+
+      if (error) throw error;
+
+      setGroups(groups.map(g => 
+        g.id === groupId ? { ...g, is_blocked: !currentBlocked } : g
+      ));
+      
+      toast.success(currentBlocked ? "Guruh faollashtirildi" : "Guruh bloklandi");
+    } catch (error) {
+      console.error("Error toggling group:", error);
+      toast.error("Xatolik yuz berdi");
+    } finally {
+      setTogglingGroup(null);
     }
   };
 
@@ -52,6 +79,9 @@ export default function UserBotManager() {
       </Card>
     );
   }
+
+  const activeGroups = groups.filter(g => !g.is_blocked);
+  const blockedGroups = groups.filter(g => g.is_blocked);
 
   return (
     <Card className="bg-zinc-900 border-zinc-800 mb-8">
@@ -72,17 +102,17 @@ export default function UserBotManager() {
             <div>
               <h4 className="text-green-400 font-medium">Bot Monitoring Faol</h4>
               <p className="text-sm text-zinc-400">
-                Guruhlardan kelgan xabarlar avtomatik tekshiriladi va kalit so'zlar topilganda haydovchilar guruhiga yuboriladi.
+                {activeGroups.length} ta guruh kuzatilmoqda, {blockedGroups.length} ta bloklangan.
               </p>
             </div>
           </div>
         </div>
 
-        {/* Watched Groups */}
+        {/* Active Groups */}
         <div className="mb-6">
           <h3 className="text-white font-medium flex items-center gap-2 mb-3">
             <Users className="h-4 w-4" />
-            Kuzatilayotgan Guruhlar ({groups.length})
+            Kuzatilayotgan Guruhlar ({activeGroups.length})
           </h3>
           <Table>
             <TableHeader>
@@ -90,28 +120,91 @@ export default function UserBotManager() {
                 <TableHead className="text-zinc-400">Guruh nomi</TableHead>
                 <TableHead className="text-zinc-400">Guruh ID</TableHead>
                 <TableHead className="text-zinc-400">Qo'shilgan</TableHead>
+                <TableHead className="text-zinc-400 text-right">Amallar</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {groups.map((group) => (
+              {activeGroups.map((group) => (
                 <TableRow key={group.id} className="border-zinc-800">
                   <TableCell className="text-white">{group.group_name || "Noma'lum"}</TableCell>
                   <TableCell className="text-zinc-400 font-mono text-sm">{group.group_id}</TableCell>
                   <TableCell className="text-zinc-400">
                     {new Date(group.created_at).toLocaleDateString("uz-UZ")}
                   </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => toggleBlockGroup(group.id, group.is_blocked)}
+                      disabled={togglingGroup === group.id}
+                    >
+                      {togglingGroup === group.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <>
+                          <Ban className="h-4 w-4 mr-1" />
+                          Bloklash
+                        </>
+                      )}
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
-              {groups.length === 0 && (
+              {activeGroups.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={3} className="text-center text-zinc-500">
-                    Guruhlar yo'q - Admin panelda qo'shing
+                  <TableCell colSpan={4} className="text-center text-zinc-500">
+                    Faol guruhlar yo'q
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
         </div>
+
+        {/* Blocked Groups */}
+        {blockedGroups.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-white font-medium flex items-center gap-2 mb-3">
+              <Ban className="h-4 w-4 text-red-500" />
+              Bloklangan Guruhlar ({blockedGroups.length})
+            </h3>
+            <Table>
+              <TableHeader>
+                <TableRow className="border-zinc-800">
+                  <TableHead className="text-zinc-400">Guruh nomi</TableHead>
+                  <TableHead className="text-zinc-400">Guruh ID</TableHead>
+                  <TableHead className="text-zinc-400 text-right">Amallar</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {blockedGroups.map((group) => (
+                  <TableRow key={group.id} className="border-zinc-800 opacity-60">
+                    <TableCell className="text-zinc-400">{group.group_name || "Noma'lum"}</TableCell>
+                    <TableCell className="text-zinc-500 font-mono text-sm">{group.group_id}</TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-green-600 text-green-500 hover:bg-green-600 hover:text-white"
+                        onClick={() => toggleBlockGroup(group.id, group.is_blocked)}
+                        disabled={togglingGroup === group.id}
+                      >
+                        {togglingGroup === group.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-4 w-4 mr-1" />
+                            Faollashtirish
+                          </>
+                        )}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
 
         {/* Keywords */}
         <div>
@@ -136,7 +229,7 @@ export default function UserBotManager() {
           <ul className="text-sm text-zinc-400 space-y-1">
             <li>• Bot kuzatilayotgan guruhlardagi har bir xabarni tekshiradi</li>
             <li>• Kalit so'z topilsa, xabar haydovchilar guruhiga yuboriladi</li>
-            <li>• Xabarga to'g'ridan-to'g'ri havola qo'shiladi</li>
+            <li>• Bloklangan guruhlar kuzatilmaydi</li>
           </ul>
         </div>
       </CardContent>

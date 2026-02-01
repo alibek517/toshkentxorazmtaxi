@@ -79,30 +79,56 @@ async def sync_all_groups():
         
         print(f"📊 {len(groups_found)} ta guruh topildi")
         
-        # Mavjud guruhlarni olish
-        existing = supabase.table("watched_groups").select("group_id").execute()
+        # Mavjud guruhlarni olish (bloklangan va bloklanmaganlar)
+        existing = supabase.table("watched_groups").select("group_id, is_blocked").execute()
         existing_ids = {g["group_id"] for g in existing.data}
         
-        # Yangi guruhlarni qo'shish
+        # Yangi guruhlarni qo'shish (haydovchilar guruhini avtomatik bloklash)
         new_groups = [g for g in groups_found if g["group_id"] not in existing_ids]
         
         if new_groups:
             for group in new_groups:
                 try:
+                    # Haydovchilar guruhini avtomatik bloklash
+                    is_blocked = group["group_id"] == DRIVERS_GROUP_ID
                     supabase.table("watched_groups").insert({
                         "group_id": group["group_id"],
-                        "group_name": group["group_name"]
+                        "group_name": group["group_name"],
+                        "is_blocked": is_blocked
                     }).execute()
-                    print(f"  ➕ Qo'shildi: {group['group_name']}")
+                    status = "🚫 Bloklandi" if is_blocked else "➕ Qo'shildi"
+                    print(f"  {status}: {group['group_name']}")
                 except Exception as e:
                     print(f"  ⚠️ Qo'shishda xato ({group['group_name']}): {e}")
         
-        print(f"✅ Jami {len(groups_found)} ta guruh kuzatilmoqda")
+        # Faol guruhlar sonini hisoblash
+        active_groups = [g for g in existing.data if not g.get("is_blocked", False)]
+        print(f"✅ Jami {len(groups_found)} ta guruh, {len(active_groups)} ta faol kuzatilmoqda")
         return groups_found
         
     except Exception as e:
         print(f"❌ Guruhlarni sinxronlashda xato: {e}")
         return []
+
+
+async def get_blocked_group_ids():
+    """Bloklangan guruh ID larini olish"""
+    global supabase
+    
+    if not supabase:
+        return set()
+    
+    try:
+        result = supabase.table("watched_groups").select("group_id").eq("is_blocked", True).execute()
+        return {g["group_id"] for g in result.data}
+    except Exception as e:
+        print(f"❌ Bloklangan guruhlarni olishda xato: {e}")
+        return set()
+
+
+# Cache for blocked groups
+blocked_groups_cache = set()
+last_blocked_cache_update = 0
 
 
 async def refresh_keywords():
@@ -163,10 +189,19 @@ def get_message_link(message: Message) -> str:
 @app.on_message(filters.group | filters.channel)
 async def handle_message(client: Client, message: Message):
     """Guruh xabarlarini qayta ishlash"""
-    global last_cache_update
+    global last_cache_update, blocked_groups_cache, last_blocked_cache_update
+    
+    # Bloklangan guruhlarni tekshirish
+    current_time = asyncio.get_event_loop().time()
+    if current_time - last_blocked_cache_update > CACHE_TTL:
+        blocked_groups_cache = await get_blocked_group_ids()
+        last_blocked_cache_update = current_time
+    
+    # Agar guruh bloklangan bo'lsa, o'tkazib yuborish
+    if message.chat.id in blocked_groups_cache:
+        return
     
     # Cache ni yangilash kerakmi?
-    current_time = asyncio.get_event_loop().time()
     if current_time - last_cache_update > CACHE_TTL:
         await refresh_keywords()
     
