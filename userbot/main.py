@@ -37,13 +37,12 @@ PHONE_NUMBERS = [p.strip().strip('"').strip("'") for p in PHONE_NUMBERS_RAW.spli
 # Supabase client
 supabase: SupabaseClient = None
 
-# Cache for keywords and blocked groups
+# Cache for keywords
 keywords_cache = []
 keywords_map = {}  # keyword -> id mapping
 last_cache_update = 0
 CACHE_TTL = 300  # 5 minutes
-blocked_groups_cache = set()
-last_blocked_cache_update = 0
+blocked_groups_cache = set()  # Faqat DRIVERS_GROUP_ID bo'ladi
 
 # Per-account stats
 account_stats = {}  # phone -> {"groups_count": N, "active_count": N}
@@ -169,8 +168,8 @@ async def sync_all_groups(client: Client, phone: str) -> list:
                 if "duplicate" not in str(e).lower():
                     pass
         
-        # Faol guruhlar
-        active_groups = [g for g in groups_found if normalize_chat_id(g["group_id"]) not in blocked_groups_cache]
+        # Faol guruhlar - faqat DRIVERS_GROUP_ID bloklanadi
+        active_groups = [g for g in groups_found if normalize_chat_id(g["group_id"]) != normalize_chat_id(DRIVERS_GROUP_ID)]
         
         # Statistikani saqlash
         account_stats[phone] = {
@@ -186,21 +185,9 @@ async def sync_all_groups(client: Client, phone: str) -> list:
 
 
 async def get_blocked_group_ids():
-    """Bloklangan guruh ID larini olish"""
-    global supabase
-    
-    if not supabase:
-        return set()
-    
-    try:
-        result = supabase.table("watched_groups").select("group_id").eq("is_blocked", True).execute()
-        blocked = {normalize_chat_id(g["group_id"]) for g in result.data}
-        # Haydovchilar guruhini har doim bloklash
-        blocked.add(normalize_chat_id(DRIVERS_GROUP_ID))
-        return blocked
-    except Exception as e:
-        print(f"❌ Bloklangan guruhlarni olishda xato: {e}")
-        return {normalize_chat_id(DRIVERS_GROUP_ID)}
+    """Faqat DRIVERS_GROUP_ID bloklanadi - qolgan hamma guruh kuzatiladi"""
+    # Faqat haydovchilar guruhini bloklash (loop oldini olish uchun)
+    return {normalize_chat_id(DRIVERS_GROUP_ID)}
 
 
 async def refresh_keywords():
@@ -220,15 +207,6 @@ async def refresh_keywords():
         print(f"❌ Kalit so'zlar yangilashda xato: {e}")
 
 
-async def refresh_blocked_groups():
-    """Bloklangan guruhlar keshini yangilash"""
-    global blocked_groups_cache, last_blocked_cache_update
-    
-    try:
-        blocked_groups_cache = await get_blocked_group_ids()
-        last_blocked_cache_update = asyncio.get_event_loop().time()
-    except Exception as e:
-        print(f"❌ Bloklangan guruhlar yangilashda xato: {e}")
 
 
 async def send_to_drivers_group(text: str, message_link: str):
@@ -295,14 +273,8 @@ def create_message_handler(phone: str):
         
         # ===== BLOKLANGAN GURUHLARNI TEKSHIRISH =====
         
-        current_time = asyncio.get_event_loop().time()
-        
-        # Keshni yangilash
-        if current_time - last_blocked_cache_update > CACHE_TTL:
-            await refresh_blocked_groups()
-        
-        # Bloklangan guruhlarni o'tkazib yuborish
-        if chat_id_normalized in blocked_groups_cache:
+        # Faqat DRIVERS_GROUP_ID bloklanadi
+        if chat_id_normalized == normalize_chat_id(DRIVERS_GROUP_ID):
             return
         
         # ===== KALIT SO'ZLARNI TEKSHIRISH =====
@@ -357,7 +329,7 @@ def create_message_handler(phone: str):
 
 async def run_client(phone: str):
     """Bitta akkaunt uchun client ishga tushirish"""
-    global blocked_groups_cache, last_blocked_cache_update
+    global blocked_groups_cache
     
     print(f"\n📱 [{phone}] Ishga tushmoqda...")
     
@@ -385,10 +357,13 @@ async def run_client(phone: str):
         # Guruhlarni sinxronlash
         my_groups = await sync_all_groups(client, phone)
         
-        # Faol guruhlar
-        active_groups = [g for g in my_groups if normalize_chat_id(g["group_id"]) not in blocked_groups_cache]
+        # Faqat DRIVERS_GROUP_ID bloklanadi
+        active_groups = [g for g in my_groups if normalize_chat_id(g["group_id"]) != normalize_chat_id(DRIVERS_GROUP_ID)]
         
         print(f"📊 [{phone}] {len(my_groups)} ta guruh, {len(active_groups)} ta faol kuzatilmoqda")
+        
+        # Har sync'dan keyin statistikani print qil
+        print_statistics()
         
         # Periodic sync for this client
         async def periodic_sync():
@@ -415,13 +390,6 @@ async def periodic_keywords_refresh():
         await refresh_keywords()
 
 
-async def periodic_blocked_refresh():
-    """Har 2 daqiqada bloklangan guruhlarni yangilash"""
-    while True:
-        await asyncio.sleep(120)
-        await refresh_blocked_groups()
-
-
 def print_statistics():
     """Statistikani chiqarish"""
     global supabase, account_stats
@@ -430,27 +398,10 @@ def print_statistics():
     print("📊 USERBOT STATISTIKASI")
     print("=" * 60)
     
-    # Database statistikasi
-    try:
-        # Jami guruhlar
-        total_result = supabase.table("watched_groups").select("id", count="exact").execute()
-        total_groups = total_result.count if hasattr(total_result, 'count') else len(total_result.data)
-        
-        # Bloklangan guruhlar
-        blocked_result = supabase.table("watched_groups").select("id", count="exact").eq("is_blocked", True).execute()
-        blocked_count = blocked_result.count if hasattr(blocked_result, 'count') else len(blocked_result.data)
-        
-        # Faol guruhlar
-        active_count = total_groups - blocked_count
-        
-        print(f"\n🗂️  Bazada jami guruhlar: {total_groups}")
-        print(f"✅ Faol (kuzatilayotgan): {active_count}")
-        print(f"🚫 Bloklangan: {blocked_count}")
-        
-    except Exception as e:
-        print(f"⚠️ Statistika olishda xato: {e}")
-    
     # Har bir akkaunt statistikasi
+    total_groups_all = 0
+    total_active_all = 0
+    
     print(f"\n📱 AKKAUNTLAR ({len(PHONE_NUMBERS)} ta):")
     print("-" * 40)
     
@@ -458,17 +409,21 @@ def print_statistics():
         stats = account_stats.get(phone, {})
         total = stats.get("groups_count", 0)
         active = stats.get("active_count", 0)
+        total_groups_all += total
+        total_active_all += active
         print(f"  {phone}: {total} guruh, {active} ta faol kuzatilmoqda")
     
+    print("-" * 40)
+    print(f"  JAMI: {total_groups_all} guruh, {total_active_all} ta faol kuzatilmoqda")
+    print(f"\n🚫 Bloklangan: Faqat DRIVERS_GROUP_ID ({DRIVERS_GROUP_ID})")
     print("=" * 60)
     print("💡 Kalit so'zlar topilganda haydovchilar guruhiga yuboriladi")
-    print("🚫 Bloklangan guruhlar va haydovchilar guruhi kuzatilmaydi")
     print("=" * 60 + "\n")
 
 
 async def main():
     """Asosiy funksiya - barcha akkauntlarni parallel ishga tushirish"""
-    global blocked_groups_cache, last_blocked_cache_update
+    global blocked_groups_cache
     
     print("🚀 UserBot Multi-Account ishga tushmoqda...")
     print(f"📱 Raqamlar soni: {len(PHONE_NUMBERS)}")
@@ -487,17 +442,15 @@ async def main():
         print("❌ Supabase'ga ulanib bo'lmadi. Chiqish...")
         sys.exit(1)
     
-    # Bloklangan guruhlarni yuklash
+    # Faqat DRIVERS_GROUP_ID bloklangan
     blocked_groups_cache = await get_blocked_group_ids()
-    last_blocked_cache_update = asyncio.get_event_loop().time()
-    print(f"\n🚫 {len(blocked_groups_cache)} ta guruh bloklangan")
+    print(f"\n🚫 Bloklangan: Faqat DRIVERS_GROUP_ID ({DRIVERS_GROUP_ID})")
     
     # Kalit so'zlarni yuklash
     await refresh_keywords()
     
-    # Periodic tasks
+    # Periodic tasks - faqat kalit so'zlarni yangilash
     asyncio.create_task(periodic_keywords_refresh())
-    asyncio.create_task(periodic_blocked_refresh())
     
     # Barcha akkauntlarni parallel ishga tushirish
     print("\n🔄 Akkauntlar ishga tushirilmoqda...")
@@ -506,9 +459,7 @@ async def main():
     for phone in PHONE_NUMBERS:
         tasks.append(asyncio.create_task(run_client(phone)))
     
-    # Biroz kutib, statistikani chiqarish
-    await asyncio.sleep(10)
-    print_statistics()
+    # Wait for all clients (statistika har sync'dan keyin print bo'ladi)
     
     # Wait for all clients
     try:
