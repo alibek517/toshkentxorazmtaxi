@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle, Settings, Eye, Trash2, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import UserBotManager from "@/components/admin/UserBotManager";
+import UserbotAccountManager from "@/components/admin/UserbotAccountManager";
 
 interface Stats {
   totalUsers: number;
@@ -501,7 +502,10 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
 
-        {/* UserBot Manager */}
+        {/* UserBot Accounts */}
+        <UserbotAccountManager />
+
+        {/* UserBot Manager - Group Monitoring */}
         <UserBotManager />
 
         {/* Keywords */}
