@@ -1,6 +1,6 @@
 """
 Telegram UserBot - Guruhlarni monitoring qilish
-Railway yoki VPS da ishga tushirish uchun
+Barcha guruhlarni avtomatik topib, kuzatuvga qo'shadi
 
 Sozlash:
 1. .env faylini yarating (env.example dan nusxa oling)
@@ -10,9 +10,11 @@ Sozlash:
 
 import os
 import asyncio
+import aiohttp
 from dotenv import load_dotenv
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from pyrogram.enums import ChatType
 from supabase import create_client, Client as SupabaseClient
 
 load_dotenv()
@@ -27,7 +29,18 @@ DRIVERS_GROUP_ID = int(os.getenv("DRIVERS_GROUP_ID", "-1003784903860"))
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # Supabase client
-supabase: SupabaseClient = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: SupabaseClient = None
+
+def init_supabase():
+    """Supabase clientni yaratish"""
+    global supabase
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase ulandi")
+        return True
+    except Exception as e:
+        print(f"❌ Supabase ulanishda xato: {e}")
+        return False
 
 # Pyrogram client - UserBot
 app = Client(
@@ -37,51 +50,101 @@ app = Client(
     phone_number=PHONE_NUMBER
 )
 
-# Cache for keywords and groups (refresh every 5 minutes)
+# Cache for keywords
 keywords_cache = []
-groups_cache = []
 last_cache_update = 0
 CACHE_TTL = 300  # 5 minutes
 
 
-async def refresh_cache():
-    """Kalit so'zlar va guruhlarni yangilash"""
-    global keywords_cache, groups_cache, last_cache_update
+async def sync_all_groups():
+    """Barcha guruhlarni topib, Supabase ga qo'shish"""
+    global supabase
+    
+    if not supabase:
+        if not init_supabase():
+            return
     
     try:
-        # Get keywords
+        print("🔍 Barcha guruhlarni qidiryapman...")
+        
+        groups_found = []
+        async for dialog in app.get_dialogs():
+            chat = dialog.chat
+            # Faqat guruh va superguruhlarni olish
+            if chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+                groups_found.append({
+                    "group_id": chat.id,
+                    "group_name": chat.title or f"Guruh {chat.id}"
+                })
+        
+        print(f"📊 {len(groups_found)} ta guruh topildi")
+        
+        # Mavjud guruhlarni olish
+        existing = supabase.table("watched_groups").select("group_id").execute()
+        existing_ids = {g["group_id"] for g in existing.data}
+        
+        # Yangi guruhlarni qo'shish
+        new_groups = [g for g in groups_found if g["group_id"] not in existing_ids]
+        
+        if new_groups:
+            for group in new_groups:
+                try:
+                    supabase.table("watched_groups").insert({
+                        "group_id": group["group_id"],
+                        "group_name": group["group_name"]
+                    }).execute()
+                    print(f"  ➕ Qo'shildi: {group['group_name']}")
+                except Exception as e:
+                    print(f"  ⚠️ Qo'shishda xato ({group['group_name']}): {e}")
+        
+        print(f"✅ Jami {len(groups_found)} ta guruh kuzatilmoqda")
+        return groups_found
+        
+    except Exception as e:
+        print(f"❌ Guruhlarni sinxronlashda xato: {e}")
+        return []
+
+
+async def refresh_keywords():
+    """Kalit so'zlarni yangilash"""
+    global keywords_cache, last_cache_update, supabase
+    
+    if not supabase:
+        if not init_supabase():
+            return
+    
+    try:
         result = supabase.table("keywords").select("keyword").execute()
         keywords_cache = [k["keyword"].lower() for k in result.data]
-        
-        # Get watched groups
-        result = supabase.table("watched_groups").select("group_id, group_name").execute()
-        groups_cache = {g["group_id"]: g["group_name"] for g in result.data}
-        
         last_cache_update = asyncio.get_event_loop().time()
-        print(f"✅ Cache yangilandi: {len(keywords_cache)} kalit so'z, {len(groups_cache)} guruh")
+        print(f"✅ Kalit so'zlar yangilandi: {len(keywords_cache)} ta")
     except Exception as e:
-        print(f"❌ Cache yangilashda xato: {e}")
+        print(f"❌ Kalit so'zlar yangilashda xato: {e}")
 
 
 async def send_to_drivers_group(text: str, message_link: str):
     """Haydovchilar guruhiga xabar yuborish (Bot orqali)"""
-    import aiohttp
     
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": DRIVERS_GROUP_ID,
         "text": text,
+        "parse_mode": "HTML",
         "reply_markup": {
             "inline_keyboard": [[{"text": "🔗 Xabarga o'tish", "url": message_link}]]
         }
     }
     
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            if resp.status == 200:
-                print(f"✅ Xabar yuborildi: {message_link}")
-            else:
-                print(f"❌ Xabar yuborishda xato: {await resp.text()}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=30) as resp:
+                if resp.status == 200:
+                    print(f"✅ Xabar yuborildi: {message_link}")
+                else:
+                    error_text = await resp.text()
+                    print(f"❌ Xabar yuborishda xato: {error_text}")
+    except Exception as e:
+        print(f"❌ Xabar yuborishda xato: {e}")
 
 
 def get_message_link(message: Message) -> str:
@@ -105,12 +168,7 @@ async def handle_message(client: Client, message: Message):
     # Cache ni yangilash kerakmi?
     current_time = asyncio.get_event_loop().time()
     if current_time - last_cache_update > CACHE_TTL:
-        await refresh_cache()
-    
-    # Bu guruh kuzatilayaptimi?
-    chat_id = message.chat.id
-    if chat_id not in groups_cache:
-        return
+        await refresh_keywords()
     
     # Xabar textini olish
     text = message.text or message.caption or ""
@@ -129,37 +187,70 @@ async def handle_message(client: Client, message: Message):
         return
     
     # Xabarni haydovchilar guruhiga yuborish
-    group_name = groups_cache.get(chat_id, "Guruh")
-    user_mention = f"@{message.from_user.username}" if message.from_user and message.from_user.username else (message.from_user.first_name if message.from_user else "Foydalanuvchi")
+    group_name = message.chat.title or "Guruh"
+    user_mention = ""
+    if message.from_user:
+        if message.from_user.username:
+            user_mention = f"@{message.from_user.username}"
+        else:
+            user_mention = message.from_user.first_name or "Foydalanuvchi"
+    else:
+        user_mention = "Foydalanuvchi"
+    
     message_link = get_message_link(message)
     
-    forward_text = f"🔔 Guruhdan topildi!\n📍 {group_name}\n🔑 Kalit so'z: {matched_keyword}\n\n{text}\n\n👤 {user_mention}"
+    forward_text = f"""🔔 <b>Guruhdan topildi!</b>
+
+📍 <b>Guruh:</b> {group_name}
+🔑 <b>Kalit so'z:</b> {matched_keyword}
+
+{text}
+
+👤 {user_mention}"""
     
     await send_to_drivers_group(forward_text, message_link)
     print(f"📨 Topildi: '{matched_keyword}' - {group_name}")
 
 
-async def periodic_cache_refresh():
-    """Har 5 daqiqada cache ni yangilash"""
+async def periodic_sync():
+    """Har 30 daqiqada guruhlarni sinxronlash"""
     while True:
-        await refresh_cache()
+        await asyncio.sleep(1800)  # 30 daqiqa
+        await sync_all_groups()
+
+
+async def periodic_keywords_refresh():
+    """Har 5 daqiqada kalit so'zlarni yangilash"""
+    while True:
         await asyncio.sleep(CACHE_TTL)
+        await refresh_keywords()
 
 
 async def main():
     """Asosiy funksiya"""
     print("🚀 UserBot ishga tushmoqda...")
     
-    # Initial cache load
-    await refresh_cache()
+    # Supabase ni boshlash
+    init_supabase()
     
-    # Start periodic refresh task
-    asyncio.create_task(periodic_cache_refresh())
-    
-    # Start the client
+    # Telegram ga ulash
     await app.start()
     print(f"✅ UserBot tayyor! {PHONE_NUMBER} bilan ulangan")
-    print(f"📡 {len(groups_cache)} ta guruhni kuzatish boshlandi")
+    
+    # Barcha guruhlarni topib, sync qilish
+    groups = await sync_all_groups()
+    
+    # Kalit so'zlarni yuklash
+    await refresh_keywords()
+    
+    print(f"📡 {len(groups)} ta guruhni kuzatish boshlandi")
+    print("=" * 50)
+    print("💡 Kalit so'zlar topilganda haydovchilar guruhiga yuboriladi")
+    print("=" * 50)
+    
+    # Periodic tasks
+    asyncio.create_task(periodic_sync())
+    asyncio.create_task(periodic_keywords_refresh())
     
     # Keep running
     await asyncio.Event().wait()
