@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle, Settings, Eye, Trash2, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import UserBotManager from "@/components/admin/UserBotManager";
 
 interface Stats {
   totalUsers: number;
@@ -499,6 +500,9 @@ export default function AdminDashboard() {
             </Table>
           </CardContent>
         </Card>
+
+        {/* UserBot Manager */}
+        <UserBotManager />
 
         {/* Keywords */}
         <Card className="bg-zinc-900 border-zinc-800 mb-8">
