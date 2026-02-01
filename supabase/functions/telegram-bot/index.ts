@@ -435,18 +435,32 @@ serve(async (req) => {
         const hasKeyword = keywordList.some((keyword) => lowerText.includes(keyword));
 
         if (hasKeyword) {
-          // Xabarni haydovchilar guruhiga yuborish
+          // Xabarni haydovchilar guruhiga yuborish - NAVBATSIZ, hammaga ochiq
           const userMention = message.from?.username 
             ? `@${message.from.username}` 
             : message.from?.first_name || "Foydalanuvchi";
 
-          const forwardText = `🔔 Guruhdan topildi!\n📍 Guruh: ${watchedGroup.group_name || chatId}\n\n${text}\n\n👤 ${userMention}`;
+          // Xabarga havola yaratish
+          const chatUsername = message.chat.username;
+          const messageId = message.message_id;
+          let messageLink = "";
+          
+          if (chatUsername) {
+            // Public guruh
+            messageLink = `https://t.me/${chatUsername}/${messageId}`;
+          } else {
+            // Private guruh - channel ID formatida
+            const cleanChatId = String(chatId).replace("-100", "");
+            messageLink = `https://t.me/c/${cleanChatId}/${messageId}`;
+          }
+
+          const forwardText = `🔔 Guruhdan topildi!\n📍 ${watchedGroup.group_name || "Guruh"}\n\n${text}\n\n👤 ${userMention}`;
 
           await callTelegram("sendMessage", {
             chat_id: DRIVERS_GROUP_ID,
             text: forwardText,
             reply_markup: {
-              inline_keyboard: [[{ text: "🙋 Men gaplashib ko'ray", callback_data: "claim_keyword" }]],
+              inline_keyboard: [[{ text: "🔗 Xabarga o'tish", url: messageLink }]],
             },
           });
         }
