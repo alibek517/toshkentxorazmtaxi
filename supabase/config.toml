@@ -1,1 +1,7 @@
 project_id = "ilmtwpvjkluieuvsmpth"
+
+[functions.userbot-auth]
+verify_jwt = false
+
+[functions.userbot-listener]
+verify_jwt = false

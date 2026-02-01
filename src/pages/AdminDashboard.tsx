@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle, Settings, Eye, Trash2, Plus, Loader2 } from "lucide-react";
+import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle, Settings, Eye, Trash2, Plus, Loader2, Phone, Send, Key, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 interface Stats {
@@ -52,8 +52,18 @@ interface Keyword {
   created_at: string;
 }
 
+interface UserbotAccount {
+  id: string;
+  phone_number: string;
+  status: string;
+  two_fa_required: boolean;
+  created_at: string;
+}
+
 const BOT_USERNAME = "@ToshkentXorazm_TaxiBot";
 const BOT_URL = "https://t.me/ToshkentXorazm_TaxiBot";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -82,6 +92,15 @@ export default function AdminDashboard() {
   const [newKeyword, setNewKeyword] = useState("");
   const [addingKeyword, setAddingKeyword] = useState(false);
 
+  // UserBot state
+  const [userbotAccounts, setUserbotAccounts] = useState<UserbotAccount[]>([]);
+  const [newPhoneNumber, setNewPhoneNumber] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [twoFaPassword, setTwoFaPassword] = useState("");
+  const [pendingAccountId, setPendingAccountId] = useState<string | null>(null);
+  const [authStep, setAuthStep] = useState<"idle" | "awaiting_code" | "awaiting_2fa">("idle");
+  const [authLoading, setAuthLoading] = useState(false);
+
   useEffect(() => {
     // Check auth
     const isAuth = sessionStorage.getItem("admin_auth");
@@ -93,6 +112,7 @@ export default function AdminDashboard() {
     fetchSettings();
     fetchWatchedGroups();
     fetchKeywords();
+    fetchUserbotAccounts();
   }, [navigate]);
 
   const fetchWatchedGroups = async () => {
@@ -109,6 +129,139 @@ export default function AdminDashboard() {
       .select("*")
       .order("created_at", { ascending: false });
     setKeywords(data || []);
+  };
+
+  const fetchUserbotAccounts = async () => {
+    const { data } = await supabase
+      .from("userbot_accounts")
+      .select("*")
+      .order("created_at", { ascending: false });
+    setUserbotAccounts((data as UserbotAccount[]) || []);
+  };
+
+  // UserBot API call helper
+  const callUserbotAuth = async (body: Record<string, any>) => {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/userbot-auth`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify(body),
+    });
+    return response.json();
+  };
+
+  const handleSendCode = async () => {
+    if (!newPhoneNumber.trim()) {
+      toast.error("Telefon raqamni kiriting");
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      const result = await callUserbotAuth({
+        action: "send_code",
+        phone_number: newPhoneNumber,
+      });
+
+      if (result.ok) {
+        setPendingAccountId(result.account_id);
+        setAuthStep("awaiting_code");
+        toast.success("Kod yuborildi! Telegram'dan kelgan kodni kiriting");
+      } else {
+        toast.error(result.error || "Xatolik yuz berdi");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Xatolik yuz berdi");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleVerifyCode = async () => {
+    if (!verificationCode.trim()) {
+      toast.error("Kodni kiriting");
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      const result = await callUserbotAuth({
+        action: "verify_code",
+        account_id: pendingAccountId,
+        code: verificationCode,
+      });
+
+      if (result.ok) {
+        toast.success("Akkaunt muvaffaqiyatli ulandi!");
+        resetAuthState();
+        fetchUserbotAccounts();
+      } else if (result.requires_2fa) {
+        setAuthStep("awaiting_2fa");
+        toast.info("2FA parol kerak");
+      } else {
+        toast.error(result.error || "Kod noto'g'ri");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Xatolik yuz berdi");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleVerify2FA = async () => {
+    if (!twoFaPassword.trim()) {
+      toast.error("Parolni kiriting");
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      const result = await callUserbotAuth({
+        action: "verify_2fa",
+        account_id: pendingAccountId,
+        password: twoFaPassword,
+      });
+
+      if (result.ok) {
+        toast.success("Akkaunt muvaffaqiyatli ulandi!");
+        resetAuthState();
+        fetchUserbotAccounts();
+      } else {
+        toast.error(result.error || "Parol noto'g'ri");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Xatolik yuz berdi");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async (accountId: string) => {
+    try {
+      const result = await callUserbotAuth({
+        action: "delete_account",
+        account_id: accountId,
+      });
+
+      if (result.ok) {
+        toast.success("Akkaunt o'chirildi");
+        fetchUserbotAccounts();
+      } else {
+        toast.error(result.error || "Xatolik yuz berdi");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Xatolik yuz berdi");
+    }
+  };
+
+  const resetAuthState = () => {
+    setNewPhoneNumber("");
+    setVerificationCode("");
+    setTwoFaPassword("");
+    setPendingAccountId(null);
+    setAuthStep("idle");
   };
 
   const handleAddGroup = async () => {
@@ -348,6 +501,152 @@ export default function AdminDashboard() {
                 className="data-[state=checked]:bg-taxi-yellow"
               />
             </div>
+          </CardContent>
+        </Card>
+
+        {/* UserBot Accounts */}
+        <Card className="bg-zinc-900 border-zinc-800 mb-8">
+          <CardHeader>
+            <CardTitle className="text-taxi-yellow flex items-center gap-2">
+              <UserPlus className="h-5 w-5" />
+              Telegram Akkauntlar (UserBot)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {/* Add account form */}
+            {authStep === "idle" && (
+              <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                <Input
+                  placeholder="Telefon raqam (+998...)"
+                  value={newPhoneNumber}
+                  onChange={(e) => setNewPhoneNumber(e.target.value)}
+                  className="bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500"
+                />
+                <Button 
+                  onClick={handleSendCode}
+                  disabled={authLoading || !newPhoneNumber.trim()}
+                  className="bg-taxi-yellow text-black hover:bg-taxi-yellow/90 shrink-0"
+                >
+                  {authLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
+                  Kod yuborish
+                </Button>
+              </div>
+            )}
+
+            {authStep === "awaiting_code" && (
+              <div className="flex flex-col gap-3 mb-6">
+                <p className="text-sm text-zinc-400">
+                  Telegram'dan kelgan kodni kiriting (format: 1.2.3.4.5)
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Input
+                    placeholder="1.2.3.4.5"
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value)}
+                    className="bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500 font-mono"
+                  />
+                  <Button 
+                    onClick={handleVerifyCode}
+                    disabled={authLoading || !verificationCode.trim()}
+                    className="bg-taxi-yellow text-black hover:bg-taxi-yellow/90 shrink-0"
+                  >
+                    {authLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Key className="h-4 w-4 mr-2" />}
+                    Tasdiqlash
+                  </Button>
+                  <Button 
+                    variant="outline"
+                    onClick={resetAuthState}
+                    className="border-zinc-700 text-zinc-400"
+                  >
+                    Bekor qilish
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {authStep === "awaiting_2fa" && (
+              <div className="flex flex-col gap-3 mb-6">
+                <p className="text-sm text-zinc-400">
+                  2FA parolni kiriting (Telegram Cloud Password)
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Input
+                    type="password"
+                    placeholder="2FA parol"
+                    value={twoFaPassword}
+                    onChange={(e) => setTwoFaPassword(e.target.value)}
+                    className="bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-500"
+                  />
+                  <Button 
+                    onClick={handleVerify2FA}
+                    disabled={authLoading || !twoFaPassword.trim()}
+                    className="bg-taxi-yellow text-black hover:bg-taxi-yellow/90 shrink-0"
+                  >
+                    {authLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Key className="h-4 w-4 mr-2" />}
+                    Tasdiqlash
+                  </Button>
+                  <Button 
+                    variant="outline"
+                    onClick={resetAuthState}
+                    className="border-zinc-700 text-zinc-400"
+                  >
+                    Bekor qilish
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Accounts list */}
+            <Table>
+              <TableHeader>
+                <TableRow className="border-zinc-800">
+                  <TableHead className="text-zinc-400">Telefon</TableHead>
+                  <TableHead className="text-zinc-400">Status</TableHead>
+                  <TableHead className="text-zinc-400">Qo'shilgan</TableHead>
+                  <TableHead className="text-zinc-400 text-right">Amallar</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {userbotAccounts.map((account) => (
+                  <TableRow key={account.id} className="border-zinc-800">
+                    <TableCell className="text-white font-mono flex items-center gap-2">
+                      <Phone className="h-4 w-4 text-zinc-500" />
+                      {account.phone_number}
+                    </TableCell>
+                    <TableCell>
+                      <Badge 
+                        variant={account.status === "active" ? "default" : "secondary"}
+                        className={account.status === "active" ? "bg-green-600" : "bg-yellow-600"}
+                      >
+                        {account.status === "active" ? "✅ Faol" : 
+                         account.status === "awaiting_code" ? "📨 Kod kutilmoqda" :
+                         account.status === "awaiting_2fa" ? "🔐 2FA kutilmoqda" : account.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-zinc-400">
+                      {new Date(account.created_at).toLocaleDateString("uz-UZ")}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => handleDeleteAccount(account.id)}
+                        className="text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {userbotAccounts.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center text-zinc-500">
+                      Hali akkauntlar yo'q
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
 

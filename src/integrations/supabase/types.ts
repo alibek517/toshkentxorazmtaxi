@@ -190,6 +190,36 @@ export type Database = {
         }
         Relationships: []
       }
+      userbot_accounts: {
+        Row: {
+          created_at: string
+          id: string
+          phone_number: string
+          session_string: string | null
+          status: string
+          two_fa_required: boolean | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          phone_number: string
+          session_string?: string | null
+          status?: string
+          two_fa_required?: boolean | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          phone_number?: string
+          session_string?: string | null
+          status?: string
+          two_fa_required?: boolean | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       watched_groups: {
         Row: {
           created_at: string
