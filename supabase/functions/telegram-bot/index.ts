@@ -419,22 +419,30 @@ serve(async (req) => {
 
     // Guruhda xabarlarni monitoring qilish
     if (chatType === "group" || chatType === "supergroup") {
+      console.log(`📡 Guruh xabari: chatId=${chatId}, text="${text?.substring(0, 50)}..."`);
+      
       // Kuzatiladigan guruhmi tekshirish
-      const { data: watchedGroup } = await supabase
+      const { data: watchedGroup, error: watchedError } = await supabase
         .from("watched_groups")
         .select("*")
         .eq("group_id", chatId)
         .single();
+
+      console.log(`🔍 Watched group: ${JSON.stringify(watchedGroup)}, error: ${watchedError?.message}`);
 
       if (watchedGroup && text) {
         // Kalit so'zlarni olish
         const { data: keywords } = await supabase.from("keywords").select("keyword");
         const keywordList = keywords?.map((k) => k.keyword.toLowerCase()) || [];
         
+        console.log(`🔑 Keywords: ${keywordList.join(", ")}`);
+        
         const lowerText = text.toLowerCase();
-        const hasKeyword = keywordList.some((keyword) => lowerText.includes(keyword));
+        const matchedKeyword = keywordList.find((keyword) => lowerText.includes(keyword));
 
-        if (hasKeyword) {
+        console.log(`✅ Matched keyword: ${matchedKeyword || "none"}`);
+
+        if (matchedKeyword) {
           // Xabarni haydovchilar guruhiga yuborish - NAVBATSIZ, hammaga ochiq
           const userMention = message.from?.username 
             ? `@${message.from.username}` 
@@ -454,15 +462,19 @@ serve(async (req) => {
             messageLink = `https://t.me/c/${cleanChatId}/${messageId}`;
           }
 
-          const forwardText = `🔔 Guruhdan topildi!\n📍 ${watchedGroup.group_name || "Guruh"}\n\n${text}\n\n👤 ${userMention}`;
+          const forwardText = `🔔 Guruhdan topildi!\n📍 ${watchedGroup.group_name || "Guruh"}\n🔑 Kalit so'z: ${matchedKeyword}\n\n${text}\n\n👤 ${userMention}`;
 
-          await callTelegram("sendMessage", {
+          console.log(`📤 Sending to drivers group: ${forwardText.substring(0, 100)}...`);
+
+          const sendResult = await callTelegram("sendMessage", {
             chat_id: DRIVERS_GROUP_ID,
             text: forwardText,
             reply_markup: {
               inline_keyboard: [[{ text: "🔗 Xabarga o'tish", url: messageLink }]],
             },
           });
+
+          console.log(`📨 Send result: ${JSON.stringify(sendResult)}`);
         }
       }
       
