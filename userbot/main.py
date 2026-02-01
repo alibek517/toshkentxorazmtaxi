@@ -131,6 +131,14 @@ blocked_groups_cache = set()
 last_blocked_cache_update = 0
 
 
+def normalize_chat_id(chat_id: int) -> int:
+    """Telegram chat id'ni bir xil formatda solishtirish uchun normalizatsiya."""
+    try:
+        return int(chat_id)
+    except Exception:
+        return chat_id
+
+
 async def refresh_keywords():
     """Kalit so'zlarni yangilash"""
     global keywords_cache, last_cache_update, supabase
@@ -190,6 +198,23 @@ def get_message_link(message: Message) -> str:
 async def handle_message(client: Client, message: Message):
     """Guruh xabarlarini qayta ishlash"""
     global last_cache_update, blocked_groups_cache, last_blocked_cache_update
+
+    # Loop'ni oldini olish:
+    # - haydovchilar guruhida o'zimiz yuborgan xabarlarni qayta ishlamaslik
+    # - bot yuborgan xabarlarni qayta ishlamaslik
+    try:
+        if normalize_chat_id(message.chat.id) == normalize_chat_id(DRIVERS_GROUP_ID):
+            return
+    except Exception:
+        return
+
+    # Outgoing (userbot o'zi yuborgan) xabarlarni ham tekshirmaymiz
+    if getattr(message, "outgoing", False):
+        return
+
+    # Botlar yuborgan xabarlarni ham tekshirmaymiz (masalan, Bot API orqali yuborilganlar)
+    if message.from_user and getattr(message.from_user, "is_bot", False):
+        return
     
     # Bloklangan guruhlarni tekshirish
     current_time = asyncio.get_event_loop().time()
@@ -198,7 +223,7 @@ async def handle_message(client: Client, message: Message):
         last_blocked_cache_update = current_time
     
     # Agar guruh bloklangan bo'lsa, o'tkazib yuborish
-    if message.chat.id in blocked_groups_cache:
+    if normalize_chat_id(message.chat.id) in {normalize_chat_id(x) for x in blocked_groups_cache}:
         return
     
     # Cache ni yangilash kerakmi?
@@ -274,6 +299,11 @@ async def main():
     
     # Barcha guruhlarni topib, sync qilish
     groups = await sync_all_groups()
+
+    # Bloklangan guruhlar keshini start'da ham yuklab olamiz
+    global blocked_groups_cache, last_blocked_cache_update
+    blocked_groups_cache = await get_blocked_group_ids()
+    last_blocked_cache_update = asyncio.get_event_loop().time()
     
     # Kalit so'zlarni yuklash
     await refresh_keywords()
