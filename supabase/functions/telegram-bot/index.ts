@@ -142,6 +142,16 @@ async function askForPhone(chatId: number) {
   });
 }
 
+function normalizePhoneNumber(input: string): string | null {
+  const trimmed = (input || "").trim();
+  if (!trimmed) return null;
+  const digits = trimmed.replace(/\s+/g, "");
+  const withPlus = digits.startsWith("+") ? digits : `+${digits}`;
+  // minimal sanity: + and 7-15 digits
+  if (!/^\+\d{7,15}$/.test(withPlus)) return null;
+  return withPlus;
+}
+
 // Buyurtmani grupaga yuborish
 async function sendOrderToGroup(user: any, orderText: string, orderType: string) {
   const hiddenText = hidePhoneNumber(orderText);
@@ -516,6 +526,19 @@ serve(async (req) => {
       } else {
         await sendMainMenu(chatId, user.full_name || telegramUser.first_name);
       }
+    } else if (text === "/newphone" && user.is_admin) {
+      // Admin: yangi UserBot raqamini qo'shish
+      await setUserState(telegramUser.id, "waiting_userbot_phone");
+      await callTelegram("sendMessage", {
+        chat_id: chatId,
+        text:
+          "📱 Yangi UserBot raqamni yuboring (masalan: +998901234567).\n\n" +
+          "Eslatma: kod Telegram ilovaga boradi (botga emas). UserBot serverda shu raqam bilan login bo'lganda kod so'raladi.",
+        reply_markup: {
+          keyboard: [[{ text: "🔙 Orqaga" }]],
+          resize_keyboard: true,
+        },
+      });
     } else if (text === "/aloqa") {
       const contactText = await getText("contact_admin");
       await callTelegram("sendMessage", { chat_id: chatId, text: contactText });
@@ -652,6 +675,35 @@ serve(async (req) => {
         });
       }
       // Admin state handlers
+      else if (currentState === "waiting_userbot_phone") {
+        const phone = normalizePhoneNumber(text);
+        if (!phone) {
+          await callTelegram("sendMessage", {
+            chat_id: chatId,
+            text: "❌ Telefon formati noto'g'ri. Masalan: +998901234567",
+          });
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // upsert: agar mavjud bo'lsa statusni pending'ga qaytaramiz
+        await supabase.from("userbot_accounts").upsert({
+          phone_number: phone,
+          status: "pending",
+          two_fa_required: false,
+        });
+
+        await callTelegram("sendMessage", {
+          chat_id: chatId,
+          text:
+            `✅ Qo'shildi: ${phone}\n\n` +
+            "UserBot server ishlayotgan bo'lsa, u bazadan yangi raqamni avtomatik olib login qilishga harakat qiladi.",
+        });
+
+        await setUserState(telegramUser.id, "");
+        await showAdminMenu(chatId);
+      }
       else if (currentState === "waiting_group_id") {
         const groupId = parseInt(text);
         if (!isNaN(groupId)) {
