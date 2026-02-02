@@ -1,13 +1,9 @@
-"""
-Telegram UserBot - Multi-Account Parallel Monitoring
-Barcha raqamlarni bir vaqtda parallel ishga tushiradi
+"""Telegram UserBot - Multi-Account Parallel Monitoring
 
-.env da raqamlarni quyidagicha yozing:
-PHONE_NUMBER="+998937078047,+998975002086,+998901234567"
-
-Ishga tushirish:
-1. .env faylini sozlang
-2. python main.py
+Muhim:
+- Endi raqamlar ro'yxati asosan bazadan olinadi (userbot_accounts).
+- .env dagi PHONE_NUMBER faqat fallback sifatida ishlatiladi.
+- DRIVERS_GROUP_ID hech qachon kuzatilmaydi (loop oldini olish).
 """
 
 import os
@@ -31,9 +27,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 DRIVERS_GROUP_ID = int(os.getenv("DRIVERS_GROUP_ID", "-1003784903860"))
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Parse multiple phone numbers from env
+# Parse multiple phone numbers from env (fallback)
 PHONE_NUMBERS_RAW = os.getenv("PHONE_NUMBER", "")
-PHONE_NUMBERS = [p.strip().strip('"').strip("'") for p in PHONE_NUMBERS_RAW.split(",") if p.strip()]
+PHONE_NUMBERS_ENV_FALLBACK = [p.strip().strip('"').strip("'") for p in PHONE_NUMBERS_RAW.split(",") if p.strip()]
 
 # Supabase client
 supabase: SupabaseClient = None
@@ -46,6 +42,9 @@ CACHE_TTL = 300  # 5 minutes
 
 # Per-account stats
 account_stats = {}  # phone -> {"groups_count": N, "active_count": N}
+
+# Running tasks by phone
+running_clients = {}  # phone -> asyncio.Task
 
 # ===== DUPLIKAT OLDINI OLISH =====
 # message_id + group_id -> timestamp (5 daqiqa ichida duplikat tekshirish)
@@ -74,28 +73,73 @@ def init_supabase():
         return False
 
 
-def sync_accounts_to_db():
-    """Akkauntlarni bazaga sinxronlash"""
+def _normalize_phone(p: str) -> str:
+    return (p or "").strip().replace(" ", "")
+
+
+def fetch_phone_numbers_from_db() -> list:
+    """Bazadan telefon raqamlarni olish (pending/active/error/connecting).
+
+    Eslatma: bu yerda service key ishlatilgani uchun RLS cheklov emas.
+    """
+    global supabase
+    if not supabase:
+        return []
+
+    try:
+        res = supabase.table("userbot_accounts").select("phone_number,status").execute()
+        phones = []
+        for row in (res.data or []):
+            status = (row.get("status") or "").lower()
+            phone = _normalize_phone(row.get("phone_number"))
+            if not phone:
+                continue
+            if status in ["pending", "active", "error", "connecting"]:
+                phones.append(phone)
+        # uniq, stable order
+        seen = set()
+        uniq = []
+        for p in phones:
+            if p not in seen:
+                seen.add(p)
+                uniq.append(p)
+        return uniq
+    except Exception as e:
+        print(f"⚠️ Bazadan raqamlarni olishda xato: {e}")
+        return []
+
+
+async def ensure_accounts_seeded_from_env():
+    """Agar bazada umuman akkaunt bo'lmasa, .env fallback raqamlarini bazaga yozib qo'yamiz."""
     global supabase
     if not supabase:
         return
-    
+    if not PHONE_NUMBERS_ENV_FALLBACK:
+        return
+
     try:
-        for phone in PHONE_NUMBERS:
-            # Akkaunt mavjudligini tekshirish
-            existing = supabase.table("userbot_accounts").select("id").eq("phone_number", phone).execute()
-            
-            if not existing.data:
-                # Yangi akkaunt qo'shish
-                supabase.table("userbot_accounts").insert({
+        existing = supabase.table("userbot_accounts").select("id", count="exact").execute()
+        count = getattr(existing, "count", None)
+        if count is None:
+            count = len(existing.data or [])
+        if count and count > 0:
+            return
+
+        for phone in PHONE_NUMBERS_ENV_FALLBACK:
+            phone = _normalize_phone(phone)
+            if not phone:
+                continue
+            try:
+                supabase.table("userbot_accounts").upsert({
                     "phone_number": phone,
-                    "status": "pending"
+                    "status": "pending",
+                    "two_fa_required": False,
                 }).execute()
-                print(f"📱 Yangi akkaunt qo'shildi: {phone}")
-        
-        print(f"✅ {len(PHONE_NUMBERS)} ta akkaunt bazaga sinxronlandi")
+            except Exception:
+                pass
+        print(f"✅ .env fallback'dan bazaga {len(PHONE_NUMBERS_ENV_FALLBACK)} ta raqam qo'shildi")
     except Exception as e:
-        print(f"⚠️ Akkauntlarni sinxronlashda xato: {e}")
+        print(f"⚠️ .env fallback seed'da xato: {e}")
 
 
 def update_account_status(phone: str, status: str):
@@ -420,9 +464,25 @@ async def run_client(phone: str):
         await asyncio.Event().wait()
         
     except Exception as e:
-        print(f"❌ [{phone}] Xato: {e}")
+        msg = str(e)
+        print(f"❌ [{phone}] Xato: {msg}")
+
+        # AUTH_KEY_UNREGISTERED bo'lsa - session fayl buzilgan bo'ladi.
+        # Session'ni o'chirib, keyingi ishga tushirishda qayta login qilish imkonini beramiz.
+        if "AUTH_KEY_UNREGISTERED" in msg:
+            try:
+                # pyrogram session fayllari odatda .session va .session-journal
+                for suffix in [".session", ".session-journal"]:
+                    path = f"{session_name}{suffix}"
+                    if os.path.exists(path):
+                        os.remove(path)
+                        print(f"🧹 [{phone}] Session o'chirildi: {path}")
+            except Exception as cleanup_err:
+                print(f"⚠️ [{phone}] Session tozalashda xato: {cleanup_err}")
+
         update_account_status(phone, "error")
-        raise
+        # MUHIM: raise qilmaymiz — bitta akkaunt xatosi hammasini to'xtatmasin
+        return
 
 
 async def periodic_keywords_refresh():
@@ -444,10 +504,10 @@ def print_statistics():
     total_groups_all = 0
     total_active_all = 0
     
-    print(f"\n📱 AKKAUNTLAR ({len(PHONE_NUMBERS)} ta):")
+    print(f"\n📱 AKKAUNTLAR ({len(list(running_clients.keys()) or [])} ta):")
     print("-" * 40)
     
-    for phone in PHONE_NUMBERS:
+    for phone in list(running_clients.keys()) or PHONE_NUMBERS_ENV_FALLBACK:
         stats = account_stats.get(phone, {})
         total = stats.get("groups_count", 0)
         active = stats.get("active_count", 0)
@@ -467,24 +527,24 @@ async def main():
     """Asosiy funksiya - barcha akkauntlarni parallel ishga tushirish"""
     
     print("🚀 UserBot Multi-Account ishga tushmoqda...")
-    print(f"📱 Raqamlar soni: {len(PHONE_NUMBERS)}")
-    
-    if not PHONE_NUMBERS:
-        print("❌ PHONE_NUMBER o'rnatilmagan!")
-        print("   .env faylida quyidagicha yozing:")
-        print('   PHONE_NUMBER="+998937078047,+998975002086,+998901234567"')
-        sys.exit(1)
-    
-    for i, phone in enumerate(PHONE_NUMBERS, 1):
-        print(f"  {i}. {phone}")
     
     # Supabase ni boshlash
     if not init_supabase():
         print("❌ Supabase'ga ulanib bo'lmadi. Chiqish...")
         sys.exit(1)
     
-    # Akkauntlarni bazaga sinxronlash
-    sync_accounts_to_db()
+    # Agar bazada akkaunt bo'lmasa, .env fallback raqamlarini seed qilamiz
+    await ensure_accounts_seeded_from_env()
+
+    # Dastlabki raqamlarni bazadan olish
+    phones = fetch_phone_numbers_from_db() or PHONE_NUMBERS_ENV_FALLBACK
+    print(f"📱 Raqamlar soni: {len(phones)}")
+    if not phones:
+        print("❌ Bazada ham, .env fallback'da ham raqam yo'q!")
+        sys.exit(1)
+
+    for i, phone in enumerate(phones, 1):
+        print(f"  {i}. {phone}")
     
     print(f"\n🚫 Bloklangan: Faqat DRIVERS_GROUP_ID ({DRIVERS_GROUP_ID})")
     
@@ -494,18 +554,28 @@ async def main():
     # Periodic tasks - faqat kalit so'zlarni yangilash
     asyncio.create_task(periodic_keywords_refresh())
     
+    async def start_phone(phone: str):
+        if phone in running_clients:
+            return
+        running_clients[phone] = asyncio.create_task(run_client(phone))
+
     # Barcha akkauntlarni parallel ishga tushirish
     print("\n🔄 Akkauntlar ishga tushirilmoqda...")
-    
-    tasks = []
-    for phone in PHONE_NUMBERS:
-        tasks.append(asyncio.create_task(run_client(phone)))
-    
-    # Wait for all clients
-    try:
-        await asyncio.gather(*tasks)
-    except Exception as e:
-        print(f"❌ Kritik xato: {e}")
+    for phone in phones:
+        await start_phone(phone)
+
+    # Bazadan yangi raqamlar qo'shilsa — restart qilmasdan ishga tushirish
+    async def watch_new_accounts():
+        while True:
+            await asyncio.sleep(30)
+            latest = fetch_phone_numbers_from_db()
+            for p in latest:
+                await start_phone(p)
+
+    asyncio.create_task(watch_new_accounts())
+
+    # Client task'lar hech qachon raise qilib hammasini yiqitmasin
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
@@ -513,7 +583,7 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\n👋 UserBot to'xtatildi")
-        for phone in PHONE_NUMBERS:
+        for phone in list(running_clients.keys()) or PHONE_NUMBERS_ENV_FALLBACK:
             update_account_status(phone, "stopped")
     except Exception as e:
         print(f"❌ Kritik xato: {e}")
