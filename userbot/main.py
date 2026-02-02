@@ -414,10 +414,12 @@ def create_message_handler(phone: str):
     return handle_message
 
 
-async def run_client(phone: str):
+async def run_client(phone: str, retry_count: int = 0):
     """Bitta akkaunt uchun client ishga tushirish"""
     
-    print(f"\n📱 [{phone}] Ishga tushmoqda...")
+    MAX_RETRIES = 2
+    
+    print(f"\n📱 [{phone}] Ishga tushmoqda..." + (f" (qayta urinish {retry_count})" if retry_count > 0 else ""))
     
     # Statusni yangilash
     update_account_status(phone, "connecting")
@@ -468,7 +470,7 @@ async def run_client(phone: str):
         print(f"❌ [{phone}] Xato: {msg}")
 
         # AUTH_KEY_UNREGISTERED bo'lsa - session fayl buzilgan bo'ladi.
-        # Session'ni o'chirib, keyingi ishga tushirishda qayta login qilish imkonini beramiz.
+        # Session'ni o'chirib, qayta login qilish imkonini beramiz.
         if "AUTH_KEY_UNREGISTERED" in msg:
             try:
                 # pyrogram session fayllari odatda .session va .session-journal
@@ -479,6 +481,13 @@ async def run_client(phone: str):
                         print(f"🧹 [{phone}] Session o'chirildi: {path}")
             except Exception as cleanup_err:
                 print(f"⚠️ [{phone}] Session tozalashda xato: {cleanup_err}")
+            
+            # Qayta urinish (session o'chirilgandan keyin yangi login so'raydi)
+            if retry_count < MAX_RETRIES:
+                print(f"🔄 [{phone}] Qayta login qilish...")
+                await asyncio.sleep(2)
+                await run_client(phone, retry_count + 1)
+                return
 
         update_account_status(phone, "error")
         # MUHIM: raise qilmaymiz — bitta akkaunt xatosi hammasini to'xtatmasin
@@ -587,5 +596,5 @@ if __name__ == "__main__":
             update_account_status(phone, "stopped")
     except Exception as e:
         print(f"❌ Kritik xato: {e}")
-        for phone in PHONE_NUMBERS:
+        for phone in list(running_clients.keys()):
             update_account_status(phone, "error")
