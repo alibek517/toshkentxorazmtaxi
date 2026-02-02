@@ -284,6 +284,8 @@ export type Database = {
       }
       watched_groups: {
         Row: {
+          bot_joined: boolean | null
+          bot_joined_at: string | null
           created_at: string
           group_id: number
           group_name: string | null
@@ -291,6 +293,8 @@ export type Database = {
           is_blocked: boolean
         }
         Insert: {
+          bot_joined?: boolean | null
+          bot_joined_at?: string | null
           created_at?: string
           group_id: number
           group_name?: string | null
@@ -298,6 +302,8 @@ export type Database = {
           is_blocked?: boolean
         }
         Update: {
+          bot_joined?: boolean | null
+          bot_joined_at?: string | null
           created_at?: string
           group_id?: number
           group_name?: string | null

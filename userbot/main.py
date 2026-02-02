@@ -14,7 +14,8 @@ import time
 from dotenv import load_dotenv
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from pyrogram.enums import ChatType
+from pyrogram.enums import ChatType, ChatMemberStatus
+from pyrogram.errors import UserNotParticipant, ChatAdminRequired, UserPrivacyRestricted, PeerIdInvalid
 from supabase import create_client, Client as SupabaseClient
 
 load_dotenv()
@@ -26,6 +27,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 DRIVERS_GROUP_ID = int(os.getenv("DRIVERS_GROUP_ID", "-1003784903860"))
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# Bot username (token'dan olinadi)
+BOT_USERNAME = None  # Ishga tushganda olinadi
 
 # Parse multiple phone numbers from env (fallback)
 PHONE_NUMBERS_RAW = os.getenv("PHONE_NUMBER", "")
@@ -202,8 +206,83 @@ async def save_keyword_hit(keyword: str, group_id: int, group_name: str, phone: 
         print(f"⚠️ Statistika saqlashda xato: {e}")
 
 
+async def get_bot_username():
+    """Bot username'ni olish"""
+    global BOT_USERNAME
+    if BOT_USERNAME:
+        return BOT_USERNAME
+    
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getMe"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("ok"):
+                        BOT_USERNAME = data["result"]["username"]
+                        print(f"🤖 Bot username: @{BOT_USERNAME}")
+                        return BOT_USERNAME
+    except Exception as e:
+        print(f"⚠️ Bot username olishda xato: {e}")
+    return None
+
+
+async def try_add_bot_to_group(client: Client, chat_id: int, phone: str) -> bool:
+    """Botni guruhga qo'shishga harakat qilish"""
+    global supabase, BOT_USERNAME
+    
+    if not BOT_USERNAME:
+        await get_bot_username()
+    
+    if not BOT_USERNAME:
+        return False
+    
+    try:
+        # Avval bot allaqachon a'zo ekanligini tekshirish
+        try:
+            member = await client.get_chat_member(chat_id, BOT_USERNAME)
+            if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR]:
+                # Bot allaqachon a'zo, bazada belgilash
+                supabase.table("watched_groups").update({
+                    "bot_joined": True,
+                    "bot_joined_at": "now()"
+                }).eq("group_id", chat_id).execute()
+                return True
+        except UserNotParticipant:
+            pass  # Bot a'zo emas, qo'shishga harakat qilamiz
+        except Exception:
+            pass
+        
+        # Botni guruhga qo'shish
+        await client.add_chat_members(chat_id, BOT_USERNAME)
+        print(f"✅ [{phone}] Bot qo'shildi: {chat_id}")
+        
+        # Bazada belgilash
+        supabase.table("watched_groups").update({
+            "bot_joined": True,
+            "bot_joined_at": "now()"
+        }).eq("group_id", chat_id).execute()
+        
+        return True
+        
+    except ChatAdminRequired:
+        # Admin huquqi kerak
+        pass
+    except UserPrivacyRestricted:
+        # Bot privacy sozlamalari tufayli qo'shib bo'lmaydi
+        pass
+    except PeerIdInvalid:
+        pass
+    except Exception as e:
+        # Boshqa xatolar
+        if "CHAT_ADMIN_REQUIRED" not in str(e) and "USER_NOT_MUTUAL_CONTACT" not in str(e):
+            pass  # Silent fail
+    
+    return False
+
+
 async def sync_all_groups(client: Client, phone: str) -> list:
-    """Barcha guruhlarni topib, Supabase ga qo'shish"""
+    """Barcha guruhlarni topib, Supabase ga qo'shish va botni qo'shish"""
     global supabase, account_stats
     
     if not supabase:
@@ -216,15 +295,17 @@ async def sync_all_groups(client: Client, phone: str) -> list:
             if chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
                 groups_found.append({
                     "group_id": chat.id,
-                    "group_name": chat.title or f"Guruh {chat.id}"
+                    "group_name": chat.title or f"Guruh {chat.id}",
+                    "chat": chat
                 })
         
         # Akkaunt guruhlarini saqlash
         await sync_account_groups(phone, groups_found)
         
         # Mavjud guruhlarni olish
-        existing = supabase.table("watched_groups").select("group_id").execute()
-        existing_ids = {g["group_id"] for g in existing.data}
+        existing = supabase.table("watched_groups").select("group_id, bot_joined").execute()
+        existing_map = {g["group_id"]: g.get("bot_joined", False) for g in existing.data}
+        existing_ids = set(existing_map.keys())
         
         # Yangi guruhlarni qo'shish (hech biri bloklanmagan - faqat DRIVERS_GROUP_ID)
         new_groups = [g for g in groups_found if g["group_id"] not in existing_ids]
@@ -236,11 +317,36 @@ async def sync_all_groups(client: Client, phone: str) -> list:
                 supabase.table("watched_groups").insert({
                     "group_id": group["group_id"],
                     "group_name": group["group_name"],
-                    "is_blocked": is_blocked
+                    "is_blocked": is_blocked,
+                    "bot_joined": False
                 }).execute()
             except Exception as e:
                 if "duplicate" not in str(e).lower():
                     pass
+        
+        # Botni har bir guruhga qo'shishga harakat qilish (faqat bot_joined=False bo'lganlarga)
+        bot_add_count = 0
+        for group in groups_found:
+            group_id = group["group_id"]
+            
+            # DRIVERS_GROUP_ID ni o'tkazib yuborish
+            if normalize_chat_id(group_id) == normalize_chat_id(DRIVERS_GROUP_ID):
+                continue
+            
+            # Agar bot allaqachon qo'shilgan bo'lsa, o'tkazib yuborish
+            if existing_map.get(group_id, False):
+                continue
+            
+            # Botni qo'shishga harakat
+            success = await try_add_bot_to_group(client, group_id, phone)
+            if success:
+                bot_add_count += 1
+            
+            # Rate limit uchun kichik pauza
+            await asyncio.sleep(0.5)
+        
+        if bot_add_count > 0:
+            print(f"🤖 [{phone}] {bot_add_count} ta guruhga bot qo'shildi")
         
         # Faol guruhlar - faqat DRIVERS_GROUP_ID tashqari hammasi
         active_groups = [g for g in groups_found if normalize_chat_id(g["group_id"]) != normalize_chat_id(DRIVERS_GROUP_ID)]
