@@ -142,7 +142,7 @@ def fetch_phone_numbers_from_db() -> list:
 
 
 async def ensure_accounts_seeded_from_env():
-    """Agar bazada umuman akkaunt bo'lmasa, .env fallback raqamlarini bazaga yozib qo'yamiz."""
+    """.env dagi barcha raqamlarni bazaga qo'shish (agar mavjud bo'lmasa)."""
     global supabase
     if not supabase:
         return
@@ -150,28 +150,34 @@ async def ensure_accounts_seeded_from_env():
         return
 
     try:
-        existing = supabase.table("userbot_accounts").select("id", count="exact").execute()
-        count = getattr(existing, "count", None)
-        if count is None:
-            count = len(existing.data or [])
-        if count and count > 0:
-            return
-
+        # Bazadagi mavjud raqamlarni olish
+        existing = supabase.table("userbot_accounts").select("phone_number").execute()
+        existing_phones = {_normalize_phone(row.get("phone_number", "")) for row in (existing.data or [])}
+        
+        added_count = 0
         for phone in PHONE_NUMBERS_ENV_FALLBACK:
             phone = _normalize_phone(phone)
             if not phone:
                 continue
-            try:
-                supabase.table("userbot_accounts").upsert({
-                    "phone_number": phone,
-                    "status": "pending",
-                    "two_fa_required": False,
-                }).execute()
-            except Exception:
-                pass
-        print(f"✅ .env fallback'dan bazaga {len(PHONE_NUMBERS_ENV_FALLBACK)} ta raqam qo'shildi")
+            
+            # Agar bu raqam bazada yo'q bo'lsa, qo'shish
+            if phone not in existing_phones:
+                try:
+                    supabase.table("userbot_accounts").insert({
+                        "phone_number": phone,
+                        "status": "pending",
+                        "two_fa_required": False,
+                    }).execute()
+                    added_count += 1
+                    print(f"✅ Yangi raqam qo'shildi: {phone}")
+                except Exception as e:
+                    if "duplicate" not in str(e).lower():
+                        print(f"⚠️ Raqam qo'shishda xato: {phone} - {e}")
+        
+        if added_count > 0:
+            print(f"✅ .env dan bazaga {added_count} ta yangi raqam qo'shildi")
     except Exception as e:
-        print(f"⚠️ .env fallback seed'da xato: {e}")
+        print(f"⚠️ .env seed'da xato: {e}")
 
 
 def update_account_status(phone: str, status: str):
