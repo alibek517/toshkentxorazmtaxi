@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Users, Package, Car, Clock, CheckCircle, XCircle, LogOut, MessageCircle, Settings, Eye, Trash2, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import UserBotManager from "@/components/admin/UserBotManager";
+
 import UserbotAccountManager from "@/components/admin/UserbotAccountManager";
 import GroupStatistics from "@/components/admin/GroupStatistics";
 
@@ -509,8 +509,6 @@ export default function AdminDashboard() {
         {/* UserBot Accounts */}
         <UserbotAccountManager />
 
-        {/* UserBot Manager - Group Monitoring */}
-        <UserBotManager />
 
         {/* Keywords */}
         <Card className="bg-zinc-900 border-zinc-800 mb-8">
