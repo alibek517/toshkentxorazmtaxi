@@ -2,7 +2,7 @@ import { Car, MapPin, Phone, Shield, Star, Users, MessageCircle, Package } from 
 import { Button } from "@/components/ui/button";
 
 const Index = () => {
-  const telegramBotUrl = "https://t.me/ToshkentXorazm_TaxiBot";
+  const telegramBotUrl = "https://t.me/toshkent_xorazm_taxi_uz_bot";
 
   return (
     <div className="min-h-screen bg-background">

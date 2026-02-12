@@ -55,8 +55,8 @@ interface Keyword {
   created_at: string;
 }
 
-const BOT_USERNAME = "@ToshkentXorazm_TaxiBot";
-const BOT_URL = "https://t.me/ToshkentXorazm_TaxiBot";
+const BOT_USERNAME = "@toshkent_xorazm_taxi_uz_bot";
+const BOT_URL = "https://t.me/toshkent_xorazm_taxi_uz_bot";
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
